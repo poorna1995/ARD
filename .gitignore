@@ -1,0 +1,41 @@
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Data (don't commit raw or processed data, but keep READMEs + scripts)
+datasets/raw/*
+datasets/golden/*
+datasets/processed/*
+datasets/cache/*
+!datasets/raw/README.md
+!datasets/processed/README.md
+!datasets/cache/README.md
+!datasets/download_datasets.py
+
+
+
+notebooks/data/*
+
+
+data/*
+
+
+
+# Outputs (commit selectively)
+logs/
+outputs/*.png
+outputs/*.csv
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
