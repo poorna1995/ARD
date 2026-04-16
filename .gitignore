@@ -21,6 +21,7 @@ datasets/cache/*
 
 notebooks/data/*
 
+.DS_Store
 
 data/*
 

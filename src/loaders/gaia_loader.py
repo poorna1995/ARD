@@ -212,7 +212,7 @@ def _parse_time_to_minutes(val) -> int | pd.NA:
     """Convert strings like '5 minutes', '10 mins', '2 hours' → int (minutes)."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return pd.NA
-    match = re.match(r"(\d+)\s*(hour|hr|min)", str(val).strip().lower())
+    match = re.match(r"(\d+)\s*(hours|hour|hr|min)", str(val).strip().lower())
     if match:
         n, unit = int(match.group(1)), match.group(2)
         return n * 60 if unit.startswith("h") else n
