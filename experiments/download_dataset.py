@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-experiments/download_one.py
+experiments/download_dataset.py
 ────────────────────────────────────────────────────────────────
 Download a SINGLE dataset, inspect it, and save to parquet.
 
 Usage (from project root):
-    python experiments/download_one.py --dataset gaia
-    python experiments/download_one.py --dataset musique
-    python experiments/download_one.py --dataset mmlu_pro
-    python experiments/download_one.py --dataset swe_bench
-    python experiments/download_one.py --dataset aime
+    python experiments/download_dataset.py --dataset gaia
+    python experiments/download_dataset.py --dataset mmlu_pro
+    python experiments/download_dataset.py --dataset swe_bench
+    python experiments/download_dataset.py --dataset math_hard
 
 What it does:
     1. Downloads the dataset from HuggingFace
@@ -88,32 +87,40 @@ def inspect(df, name: str):
     print(f"  mean   : {ql.mean():>8,.0f}")
     print(f"  max    : {ql.max():>8,}")
 
-    # ── Complexity ground truth (if available) ────────────────
-    # if "complexity_gt" in df.columns:
-    #     print("\n── Complexity GT distribution ───────────────────────")
-    #     gt = df["complexity_gt"].dropna()
-    #     print(f"  range  : {gt.min():.2f} → {gt.max():.2f}")
-    #     print(f"  mean   : {gt.mean():.3f}")
-    #     # Value counts
-    #     vc = gt.value_counts().sort_index()
-    #     for val, cnt in vc.items():
-    #         bar = "█" * int(cnt / vc.max() * 20)
-    #         print(f"  {val:.2f}  {bar}  {cnt}")
-
     if "level" in df.columns:
-        print("\n── GAIA Level distribution ──────────────────────────")
+        level_header = (
+            "\n── GAIA Level distribution ──────────────────────────"
+            if name == "gaia"
+            else "\n── Level distribution ───────────────────────────────"
+        )
+        print(level_header)
         vc = df["level"].value_counts().sort_index()
         labels = {1: "Level 1 (easy)  ", 2: "Level 2 (medium)", 3: "Level 3 (hard)  "}
         for lvl, cnt in vc.items():
             bar = "█" * int(cnt / vc.max() * 25)
             print(f"  {labels.get(lvl, str(lvl))}  {bar}  {cnt}")
 
-    if "num_hops" in df.columns:
-        print("\n── MuSiQue hop distribution ─────────────────────────")
-        vc = df["num_hops"].value_counts().sort_index()
-        for hops, cnt in vc.items():
-            bar = "█" * int(cnt / vc.max() * 25)
-            print(f"  {hops}-hop  {bar}  {cnt}")
+    if name == "math_hard":
+        if "type" in df.columns:
+            print("\n── MATH-Hard subjects (top 8) ──────────────────────")
+            vc = df["type"].value_counts().head(8)
+            for subject, cnt in vc.items():
+                bar = "█" * int(cnt / vc.max() * 20)
+                print(f"  {subject:<24} {bar}  {cnt}")
+
+        if "answer" in df.columns:
+            n_null = int(df["answer"].isna().sum())
+            print("\n── Boxed answer extraction ──────────────────────────")
+            print(f"  missing boxed answers : {n_null}")
+            print(f"  extracted answers     : {len(df) - n_null}")
+
+        if "solution_length" in df.columns:
+            sl = df["solution_length"]
+            print("\n── Solution length (chars) ──────────────────────────")
+            print(f"  min    : {sl.min():>8,}")
+            print(f"  median : {sl.median():>8,.0f}")
+            print(f"  mean   : {sl.mean():>8,.0f}")
+            print(f"  max    : {sl.max():>8,}")
 
     if "category" in df.columns:
         print("\n── MMLU-Pro categories ──────────────────────────────")
@@ -210,11 +217,10 @@ def main():
             print("    Run: huggingface-cli login")
             print("    Or:  export HF_TOKEN=hf_your_token_here")
             print("    Then request access at: huggingface.co/gaia-benchmark/GAIA")
-        elif args.dataset == "musique":
+        elif args.dataset == "math_hard":
             print("  • Try: pip install datasets --upgrade")
-            print("  • Or download manually from:")
-            print("    https://github.com/StonyBrookNLP/musique")
-            print(f"    Place musique_ans_v1.0_dev.jsonl in: datasets/raw/musique/")
+            print("  • Confirm access to: lighteval/MATH-Hard on Hugging Face")
+            print("  • Retry with: --force")
         else:
             print("  • Check your internet connection")
             print("  • Try: pip install datasets --upgrade")

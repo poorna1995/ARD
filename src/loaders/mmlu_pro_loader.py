@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import logging
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -28,12 +29,19 @@ class MMLUProLoader(BaseLoader):
 
     DATASET_NAME = "mmlu_pro"
 
+    @property
+    def _split(self) -> str:
+        return self.config.get("split", "test")
+
+    @property
+    def _raw_path(self) -> Path:
+        return self.raw_dir / f"raw_{self._split}.parquet"
+
     def _download(self) -> pd.DataFrame:
         hf_repo = self.config.get("hf_repo", "TIGER-Lab/MMLU-Pro")
-        split = self.config.get("split", "test")
 
-        logger.info(f"  HF repo: {hf_repo}  split: {split}")
-        ds = load_dataset(hf_repo, split=split)
+        logger.info(f"  HF repo: {hf_repo}  split: {self._split}")
+        ds = load_dataset(hf_repo, split=self._split)
 
         # ── Convert to pandas normally ────────────────────────────
         df = ds.to_pandas()
@@ -48,6 +56,9 @@ class MMLUProLoader(BaseLoader):
             logger.info(f"  Re-extracted options: {sample_len} choices per question")
         except Exception as e:
             logger.warning(f"  Could not re-extract options directly: {e}")
+
+        df.to_parquet(self._raw_path, index=False)
+        logger.info(f"  Raw data saved → {self._raw_path}  ({len(df):,} rows)")
 
         return df
 
@@ -80,13 +91,6 @@ class MMLUProLoader(BaseLoader):
         ]
         keep = [c for c in keep if c in df.columns]
         df = df[keep].copy()
-
-        # ── Normalise options → plain Python list ─────────────────
-        # Handles every format we might receive:
-        #   list        → use directly
-        #   ndarray     → .tolist()
-        #   str "[...]" → ast.literal_eval
-        #   empty/None  → None (marked missing)
         def to_list(val):
             if isinstance(val, list):
                 return val if len(val) > 0 else None
