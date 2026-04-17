@@ -1,0 +1,18 @@
+{
+  "dataset": "mmlu_pro",
+  "model": "gpt-4o-mini",
+  "total_queries": 10,
+  "accuracy_exact": 80.0,
+  "total_tokens": 11256,
+  "total_cost": 0.001803,
+  "avg_latency": 1.076,
+  "errors": 0,
+  "per_dataset": {
+    "MMLU-PRO": {
+      "n": 10,
+      "accuracy_exact": 80.0,
+      "total_cost": 0.001803,
+      "avg_tokens": 1125.6
+    }
+  }
+}
