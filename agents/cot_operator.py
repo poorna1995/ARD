@@ -10,8 +10,6 @@ Dedicated baseline operators for chain-of-thought (single completion).
 - ``few_shot_cot_operator``: same call shape; **fixed few-shot exemplars** are
   embedded in the resolved ``few_shot_cot`` system prompts in
   ``baselines/prompt_templates.py`` (not loaded from the dataset).
-
-Both delegate to one chat completion — same contract as ``vanallia_operator``.
 """
 
 from typing import Any, Optional, Tuple
@@ -37,6 +35,7 @@ def zero_shot_cot_operator(
         max_tokens=max_tokens,
         temperature=temperature,
         seed=seed,
+
     )
 
 

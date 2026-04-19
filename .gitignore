@@ -21,7 +21,7 @@ datasets/baselines/*
 notebooks/data/*
 
 .DS_Store
-
+test.py
 data/*
 pyproject.toml
 tests/*
@@ -32,6 +32,7 @@ notebooks/graph1.ipynb
 notebooks/graph2.ipynb
 notebooks/hidden_State.ipynb
 notebooks/model_agnostic.ipynb
+notebooks/test_Cot.ipynb
 
 # Outputs (commit selectively)
 logs/
