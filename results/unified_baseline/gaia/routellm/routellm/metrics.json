@@ -1,0 +1,42 @@
+{
+  "dataset": "gaia",
+  "modality": "routellm",
+  "model": "routellm",
+  "system_prompt_version": "v1",
+  "user_prompt_version": "v1",
+  "prompt_hash": "f83128f7a4f0860b53b847b61a60ade5cc679755c4204f75f31ce9d824e489c0",
+  "total_queries": 165,
+  "correct_queries": 21,
+  "accuracy": 0.127273,
+  "total_prompt_tokens": 29525,
+  "total_completion_tokens": 699,
+  "total_tokens": 30224,
+  "avg_tokens_per_query": 183.176,
+  "total_cost_usd": 0.080823,
+  "avg_latency_s": 1.01,
+  "p50_latency_s": 0.92,
+  "p95_latency_s": 1.481,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "avg_reasoning_steps": 0.073,
+  "avg_tool_calls": null,
+  "metadata": {
+    "gaia_level_metrics": {
+      "1": {
+        "total": 53,
+        "correct": 9,
+        "accuracy": 0.169811
+      },
+      "2": {
+        "total": 86,
+        "correct": 11,
+        "accuracy": 0.127907
+      },
+      "3": {
+        "total": 26,
+        "correct": 1,
+        "accuracy": 0.038462
+      }
+    }
+  }
+}

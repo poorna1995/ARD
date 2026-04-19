@@ -16,6 +16,7 @@ Extra columns kept:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pandas as pd
 from datasets import load_dataset
@@ -29,13 +30,23 @@ class SWEBenchLoader(BaseLoader):
 
     DATASET_NAME = "swe_bench"
 
+    @property
+    def _split(self) -> str:
+        return self.config.get("split", "test")
+
+    @property
+    def _raw_path(self) -> Path:
+        return self.raw_dir / f"raw_{self._split}.parquet"
+
     def _download(self) -> pd.DataFrame:
         hf_repo = self.config.get("hf_repo", "princeton-nlp/SWE-bench_Verified")
-        split = self.config.get("split", "test")
 
-        logger.info(f"  HF repo: {hf_repo}  split: {split}")
-        ds = load_dataset(hf_repo, split=split)
-        return ds.to_pandas()
+        logger.info(f"  HF repo: {hf_repo}  split: {self._split}")
+        ds = load_dataset(hf_repo, split=self._split)
+        raw_df = ds.to_pandas()
+        raw_df.to_parquet(self._raw_path, index=False)
+        logger.info(f"  Raw data saved → {self._raw_path}  ({len(raw_df):,} rows)")
+        return raw_df
 
     def _process(self, raw_df: pd.DataFrame) -> pd.DataFrame:
         df = raw_df.copy()

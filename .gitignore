@@ -16,22 +16,30 @@ datasets/cache/*
 !datasets/processed/README.md
 !datasets/cache/README.md
 !datasets/download_datasets.py
-
-
+datasets/baselines/*
 
 notebooks/data/*
 
 .DS_Store
 
 data/*
-
-
+pyproject.toml
+tests/*
+.vanallia.py
+tests/
+notebooks/graph_representation.ipynb
+notebooks/graph1.ipynb
+notebooks/graph2.ipynb
+notebooks/hidden_State.ipynb
+notebooks/model_agnostic.ipynb
 
 # Outputs (commit selectively)
 logs/
 outputs/*.png
 outputs/*.csv
-
+uv.lock
+Cot.py
+vanallia.py
 # Jupyter checkpoints
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/

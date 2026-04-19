@@ -1,15 +1,13 @@
 from .swe_bench_loader import SWEBenchLoader
 from .gaia_loader import GAIALoader
 from .mmlu_pro_loader import MMLUProLoader
-from .musique_loader import MuSiQueLoader
-from .aime_loader import AIMELoader
+from .math_hard_loader import MathHardLoader
 
 LOADER_REGISTRY = {
     "swe_bench": SWEBenchLoader,
     "gaia": GAIALoader,
     "mmlu_pro": MMLUProLoader,
-    "musique": MuSiQueLoader,
-    "aime": AIMELoader,
+    "math_hard": MathHardLoader,
 }
 
 
