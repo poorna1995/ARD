@@ -1,0 +1,73 @@
+{
+  "dataset": "mmlu_pro",
+  "modality": "few_shot_cot",
+  "model": "gpt-4o-mini",
+  "system_prompt_version": "v1",
+  "user_prompt_version": "v1",
+  "prompt_hash": "3bc98244fce391a7d043d0d1f5d6dab600e4ee2b698a84481a2f10af29ef374f",
+  "total_queries": 270,
+  "correct_queries": 160,
+  "accuracy": 0.592593,
+  "total_prompt_tokens": 112192,
+  "total_completion_tokens": 28272,
+  "total_tokens": 140464,
+  "avg_tokens_per_query": 520.237,
+  "total_cost_usd": 0.03378,
+  "avg_latency_s": 2.243,
+  "p50_latency_s": 1.584,
+  "p95_latency_s": 6.269,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "avg_reasoning_steps": 2.496,
+  "avg_tool_calls": null,
+  "metadata": {
+    "cot_variant": "few_shot_cot",
+    "mmlu_category_metrics": {
+      "biology": {
+        "total": 30,
+        "correct": 24,
+        "accuracy": 0.8
+      },
+      "business": {
+        "total": 30,
+        "correct": 21,
+        "accuracy": 0.7
+      },
+      "economics": {
+        "total": 30,
+        "correct": 18,
+        "accuracy": 0.6
+      },
+      "health": {
+        "total": 30,
+        "correct": 19,
+        "accuracy": 0.633333
+      },
+      "history": {
+        "total": 30,
+        "correct": 11,
+        "accuracy": 0.366667
+      },
+      "law": {
+        "total": 30,
+        "correct": 8,
+        "accuracy": 0.266667
+      },
+      "math": {
+        "total": 30,
+        "correct": 23,
+        "accuracy": 0.766667
+      },
+      "philosophy": {
+        "total": 30,
+        "correct": 16,
+        "accuracy": 0.533333
+      },
+      "physics": {
+        "total": 30,
+        "correct": 20,
+        "accuracy": 0.666667
+      }
+    }
+  }
+}

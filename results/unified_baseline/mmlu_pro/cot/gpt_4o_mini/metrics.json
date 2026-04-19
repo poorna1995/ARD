@@ -4,21 +4,69 @@
   "model": "gpt-4o-mini",
   "system_prompt_version": "v1",
   "user_prompt_version": "v1",
-  "prompt_hash": "900dcd09123dc52f5e07c0f6d9b74e2c52e110c3c90839918d28c631e5a128ca",
-  "total_queries": 5,
-  "correct_queries": 1,
-  "accuracy": 0.2,
-  "total_prompt_tokens": 1479,
-  "total_completion_tokens": 558,
-  "total_tokens": 2037,
-  "avg_tokens_per_query": 407.4,
-  "total_cost_usd": 0.000556,
-  "avg_latency_s": 2.715,
-  "p50_latency_s": 2.327,
-  "p95_latency_s": 4.426,
+  "prompt_hash": "77d842514d96459c418467d6a7f2c86f69048d427d928d024efa65e488c4ce5c",
+  "total_queries": 180,
+  "correct_queries": 103,
+  "accuracy": 0.572222,
+  "total_prompt_tokens": 47997,
+  "total_completion_tokens": 34433,
+  "total_tokens": 82430,
+  "avg_tokens_per_query": 457.944,
+  "total_cost_usd": 0.027861,
+  "avg_latency_s": 4.129,
+  "p50_latency_s": 2.958,
+  "p95_latency_s": 10.901,
   "error_count": 0,
   "error_rate": 0.0,
-  "avg_reasoning_steps": null,
+  "avg_reasoning_steps": 4.222,
   "avg_tool_calls": null,
-  "metadata": {}
+  "metadata": {
+    "mmlu_category_metrics": {
+      "biology": {
+        "total": 20,
+        "correct": 17,
+        "accuracy": 0.85
+      },
+      "business": {
+        "total": 20,
+        "correct": 14,
+        "accuracy": 0.7
+      },
+      "economics": {
+        "total": 20,
+        "correct": 13,
+        "accuracy": 0.65
+      },
+      "health": {
+        "total": 20,
+        "correct": 12,
+        "accuracy": 0.6
+      },
+      "history": {
+        "total": 20,
+        "correct": 8,
+        "accuracy": 0.4
+      },
+      "law": {
+        "total": 20,
+        "correct": 6,
+        "accuracy": 0.3
+      },
+      "math": {
+        "total": 20,
+        "correct": 12,
+        "accuracy": 0.6
+      },
+      "philosophy": {
+        "total": 20,
+        "correct": 7,
+        "accuracy": 0.35
+      },
+      "physics": {
+        "total": 20,
+        "correct": 14,
+        "accuracy": 0.7
+      }
+    }
+  }
 }

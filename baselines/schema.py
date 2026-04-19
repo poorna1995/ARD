@@ -12,7 +12,7 @@ from baselines.constants import (
 
 @dataclass
 class UnifiedExperimentRecord:
-    # Run identi ddty
+    # Run identity
     query_id: str
     dataset: str
     modality: str
@@ -23,10 +23,17 @@ class UnifiedExperimentRecord:
     ground_truth: str
     predicted_answer: str
     is_correct: bool
+    # Verbatim model completion from the API (before extraction / scoring heuristics).
+    raw_model_output: Optional[str] = None
 
     # Optional traces
     reasoning_trace: Optional[str] = None
     tool_trace: Optional[str] = None
+    # For CoT-style modalities: reasoning lines / markers in raw output.
+    # For ReAct: non-finish trace steps (tool Thought/Action cycles before finish).
+    reasoning_steps: Optional[int] = None
+    # ReAct only: total entries in tool_trace (includes finish row when present).
+    react_trace_length: Optional[int] = None
 
     # Usage and cost
     prompt_tokens: int = 0
@@ -51,6 +58,32 @@ class UnifiedExperimentRecord:
         validate_dataset(self.dataset)
         validate_modality(self.modality)
         validate_model(self.model)
+
+@dataclass
+class ReActStep:
+    """
+    One Thought/Action/Observation cycle.
+    Stored as a plain dataclass — cheaper than dict for large traces.
+    Serialised to dict only once at the end for JSON storage.
+    """
+    step:         int
+    thought:      str
+    action:       str        # tool name  (e.g. "calculator")
+    action_input: str        # raw string passed to the tool
+    observation:  str        # tool return value
+    error:        bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step":         self.step,
+            "thought":      self.thought,
+            "action":       self.action,
+            "action_input": self.action_input,
+            "observation":  self.observation,
+            "error":        self.error,
+        }
+
+
 
 
 @dataclass

@@ -1,0 +1,42 @@
+{
+  "dataset": "gaia",
+  "modality": "vanilla",
+  "model": "gpt-4o-mini",
+  "system_prompt_version": "v1",
+  "user_prompt_version": "v1",
+  "prompt_hash": "caa1388609f92a3bef940bc304c96482d5275dce578317fcfccbe1cb3d26c6a1",
+  "total_queries": 165,
+  "correct_queries": 7,
+  "accuracy": 0.042424,
+  "total_prompt_tokens": 39260,
+  "total_completion_tokens": 619,
+  "total_tokens": 39879,
+  "avg_tokens_per_query": 241.691,
+  "total_cost_usd": 0.006257,
+  "avg_latency_s": 0.61,
+  "p50_latency_s": 0.549,
+  "p95_latency_s": 0.951,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "avg_reasoning_steps": 0.042,
+  "avg_tool_calls": null,
+  "metadata": {
+    "gaia_level_metrics": {
+      "1": {
+        "total": 53,
+        "correct": 3,
+        "accuracy": 0.056604
+      },
+      "2": {
+        "total": 86,
+        "correct": 4,
+        "accuracy": 0.046512
+      },
+      "3": {
+        "total": 26,
+        "correct": 0,
+        "accuracy": 0.0
+      }
+    }
+  }
+}

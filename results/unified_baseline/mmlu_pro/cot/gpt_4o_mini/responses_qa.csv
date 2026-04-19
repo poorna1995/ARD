@@ -1,0 +1,34 @@
+query,ground_truth,predicted_answer
+"Typical advertising regulatory bodies suggest, for example that adverts must not: encourage _________, cause unnecessary ________ or _____, and must not cause _______ offence.",I,"Advertising regulatory bodies typically emphasize that adverts must not encourage unsafe practices, cause unnecessary distress or fear, and must not cause serious offence. 
+
+- Option A mentions ""Safe practices,"" which contradicts the typical regulations.
+- Option B includes ""Joy,"" which is not a concern for regulatory bodies.
+- Option C also mentions ""Safe practices,"" which is incorrect.
+- Option D includes ""Safe practices,"" which is not aligned with regulations.
+- Option E mentions ""Unsafe practices,"" but ""Serious"" is not the right context.
+- Option F includes ""Safe practices,"" which is incorrect.
+- Option G mentions ""Safe practices,"" which is not aligned with regulations.
+- Option H includes ""Unsafe practices,"" but ""Wants"" is not a concern.
+- Option I correctly states ""Unsafe practices,"" ""Distress,"" ""Fear,"" and ""Serious.""
+
+Thus, the correct answer is Option I.
+
+The answer is I."
+"Managers are entrusted to run the company in the best interest of ________. Specifically, they have a duty to act for the benefit of the company, as well as a duty of ________ and of _______.",F,"Managers are primarily responsible for acting in the best interest of shareholders, as they are the owners of the company. The duties they owe include care and skill, which are essential for making informed decisions and managing the company effectively. The option that correctly identifies these responsibilities is F. Shareholders, Care and Skill, Diligence. 
+
+The answer is F."
+"There are two main issues associated with _____ sizing. _______ is a key issue as due to the information policy of the corporation it can be argued that employees have a right to know if they are being made redundant. _______ is a second issue, particularly the ________ package that employees receive when laid off.",J,"The context of the question suggests that the issues relate to downsizing in a corporate environment. The first blank should refer to a key issue regarding employees' rights to know about redundancy, which aligns with ""Privacy."" The second blank relates to the financial aspect of layoffs, which is typically referred to as ""Benefit"" or ""Compensation."" 
+
+Option D fits well: ""Down"" for downsizing, ""Privacy"" for the right to know, and ""Benefit"" for the package received. 
+
+Other options either do not match the context or use incorrect terms. 
+
+The answer is D."
+_______ locate morality beyond the sphere of rationality in an emotional 'moral impulse' towards others.,C,"The question refers to a perspective that emphasizes emotions and moral impulses rather than rationality in ethical considerations. The ""ethics of care"" focuses on relationships and emotional connections, aligning with the idea of a moral impulse towards others. Other options like ethical egoism, consequentialist ethics, and deontological ethics are more rational or duty-based. 
+
+The answer is H."
+" Some of key differences between Islamic finance and conventional finance include - prohibition of charging and paying _______, prohibition on ______ and ______ transactions, prohibition of sinful investment and requirement for all financial products to be backed by __________.",G,"Islamic finance prohibits charging and paying interest, which is a key distinction from conventional finance. It also prohibits uncertain (gharar) and speculative (maysir) transactions, and requires that financial products be backed by tangible assets. Therefore, the correct option must include ""Interest,"" ""Uncertain,"" ""Speculative,"" and ""Tangible assets."" 
+
+Options A, B, C, D, E, F, H, I, and J do not meet all these criteria. The only option that fits is G.
+
+The answer is G."

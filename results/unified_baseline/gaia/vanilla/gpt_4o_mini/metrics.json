@@ -4,38 +4,33 @@
   "model": "gpt-4o-mini",
   "system_prompt_version": "v1",
   "user_prompt_version": "v1",
-  "prompt_hash": "773001201f2f0beb3d3431c33c26071a0512ed29d12629d073bc517fb37ff06b",
-  "total_queries": 165,
-  "correct_queries": 7,
-  "accuracy": 0.042424,
-  "total_prompt_tokens": 51470,
-  "total_completion_tokens": 611,
-  "total_tokens": 52081,
-  "avg_tokens_per_query": 315.642,
-  "total_cost_usd": 0.008089,
-  "avg_latency_s": 0.674,
-  "p50_latency_s": 0.573,
-  "p95_latency_s": 0.955,
+  "prompt_hash": "caa1388609f92a3bef940bc304c96482d5275dce578317fcfccbe1cb3d26c6a1",
+  "total_queries": 5,
+  "correct_queries": 1,
+  "accuracy": 0.2,
+  "total_prompt_tokens": 1251,
+  "total_completion_tokens": 27,
+  "total_tokens": 1278,
+  "avg_tokens_per_query": 255.6,
+  "total_cost_usd": 0.000204,
+  "avg_latency_s": 0.972,
+  "p50_latency_s": 0.882,
+  "p95_latency_s": 1.323,
   "error_count": 0,
   "error_rate": 0.0,
-  "avg_reasoning_steps": null,
+  "avg_reasoning_steps": 0.0,
   "avg_tool_calls": null,
   "metadata": {
     "gaia_level_metrics": {
       "1": {
-        "total": 53,
-        "correct": 2,
-        "accuracy": 0.037736
-      },
-      "2": {
-        "total": 86,
-        "correct": 5,
-        "accuracy": 0.05814
-      },
-      "3": {
-        "total": 26,
+        "total": 1,
         "correct": 0,
         "accuracy": 0.0
+      },
+      "2": {
+        "total": 4,
+        "correct": 1,
+        "accuracy": 0.25
       }
     }
   }

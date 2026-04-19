@@ -10,12 +10,18 @@ ALLOWED_DATASETS: tuple[str, ...] = (
 
 ALLOWED_MODALITIES: tuple[str, ...] = (
     "vanilla",
-    "cot",
+    "zero_shot_cot",
+    "few_shot_cot",
     "react",
     "multiagent",
+    "routellm",
 )
 
-ALLOWED_MODELS: tuple[str, ...] = ("gpt-4o-mini",)
+ALLOWED_MODELS: tuple[str, ...] = (
+    "gpt-4o-mini",
+    "gpt-4o",
+    "routellm",
+)
 
 
 def validate_dataset(dataset: str) -> None:

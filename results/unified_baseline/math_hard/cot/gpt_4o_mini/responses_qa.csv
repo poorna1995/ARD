@@ -1,0 +1,306 @@
+query,ground_truth,predicted_answer
+How many square units are in the region satisfying the inequalities $y \ge |x|$ and $y \le -|x|+3$? Express your answer as a decimal.,4.5,"To find the area of the region satisfying the inequalities \( y \ge |x| \) and \( y \le -|x| + 3 \), we first analyze the equations of the lines represented by these inequalities.
+
+1. The inequality \( y \ge |x| \) represents the area above the V-shaped graph of \( y = |x| \), which consists of two lines:
+   - \( y = x \) for \( x \ge 0 \)
+   - \( y = -x \) for \( x < 0 \)
+
+2. The inequality \( y \le -|x| + 3 \) represents the area below the inverted V-shaped graph of \( y = -|x| + 3 \), which consists of two lines:
+   - \( y = -x + 3 \) for \( x \ge 0 \)
+   - \( y = x + 3 \) for \( x < 0 \)
+
+Next, we find the points of intersection of the lines \( y = |x| \) and \( y = -|x| + 3 \).
+
+**For \( x \ge 0 \):**
+- Set \( y = x \) equal to \( y = -x + 3 \):
+  \[
+  x = -x + 3 \implies 2x = 3 \implies x = \frac{3}{2}
+  \]
+- Thus, \( y = \frac{3}{2} \). The point of intersection is \( \left( \frac{3}{2}, \frac{3}{2} \right) \).
+
+**For \( x < 0 \):**
+- Set \( y = -x \) equal to \( y = x + 3 \):
+  \[
+  -x = x + 3 \implies -2x = 3 \implies x = -\frac{3}{2}
+  \]
+- Thus, \( y = \frac{3}{2} \). The point of intersection is \( \left( -\frac{3}{2}, \frac{3}{2} \right) \).
+
+Now we have the vertices of the region formed by the intersections:
+- \( \left( \frac{3}{2}, \frac{3}{2} \right) \)
+- \( \left( -\frac{3}{2}, \frac{3}{2} \right) \)
+- The vertex at the origin \( (0, 0) \).
+
+The shape formed by these points is a triangle with vertices at \( (0, 0) \), \( \left( \frac{3}{2}, \frac{3}{2} \right) \), and \( \left( -\frac{3}{2}, \frac{3}{2} \right) \).
+
+To find the area of this triangle, we can use the formula for the area of a triangle given by vertices \( (x_1, y_1) \), \( (x_2, y_2) \), and \( (x_3, y_3) \):
+\[
+\text{Area} = \frac{1}{2} \left| x_1(y_2 - y_3) + x_2(y_3 - y_1) + x_3(y_1 - y_2) \right|
+\]
+Substituting the vertices:
+- \( (0, 0) \)
+- \( \left( \frac{3}{2}, \frac{3}{2} \right) \)
+- \( \left( -\frac{3}{2}, \frac{3}{2} \right) \)
+
+Calculating:
+\[
+\text{Area} = \frac{1}{2} \left| 0\left(\frac{3}{2} - \frac{3}{2}\right) + \frac{3}{2}\left(\frac{3}{2} - 0\right) + \left(-\frac{3}{2}\right)(0 - \frac{3}{2}) \right|
+\]
+\[
+= \frac{1}{2} \left| 0 + \frac{9}{4} + \frac{9}{4} \right| = \frac{1}{2} \left| \frac{18}{4} \right| = \frac{1}{2} \cdot \frac{9}{2} = \frac{9}{4}
+\]
+
+Thus, the area of the region is \( \frac{9}{4} = 2.25 \).
+
+The answer is 2.25."
+"When Lauren was born on January 1, 1990, her grandparents put $\$1000$ in a savings account in her name. The account earned $7.5\%$ annual interest compounded quarterly every three months. To the nearest dollar, how much money was in her account when she turned two?",1160,"To find the amount in the savings account when Lauren turned two, we need to calculate the future value of the investment using the formula for compound interest:
+
+\[
+A = P \left(1 + \frac{r}{n}\right)^{nt}
+\]
+
+where:
+- \(A\) is the amount of money accumulated after n years, including interest.
+- \(P\) is the principal amount (the initial amount of money).
+- \(r\) is the annual interest rate (decimal).
+- \(n\) is the number of times that interest is compounded per year.
+- \(t\) is the time the money is invested for in years.
+
+Given:
+- \(P = 1000\)
+- \(r = 0.075\)
+- \(n = 4\) (quarterly)
+- \(t = 2\)
+
+Substituting the values into the formula:
+
+\[
+A = 1000 \left(1 + \frac{0.075}{4}\right)^{4 \cdot 2}
+\]
+
+Calculating \( \frac{0.075}{4} \):
+
+\[
+\frac{0.075}{4} = 0.01875
+\]
+
+Now substituting back into the formula:
+
+\[
+A = 1000 \left(1 + 0.01875\right)^{8}
+\]
+
+Calculating \(1 + 0.01875\):
+
+\[
+1 + 0.01875 = 1.01875
+\]
+
+Now we calculate \( (1.01875)^{8} \):
+
+\[
+(1.01875)^{8} \approx 1.161112
+\]
+
+Now substituting this back into the equation for \(A\):
+
+\[
+A \approx 1000 \times 1.161112 \approx 1161.112
+\]
+
+Rounding to the nearest dollar:
+
+\[
+A \approx 1161
+\]
+
+Thus, the amount in her account when she turned two is:
+
+The answer is 1161."
+Chris labels every lattice point in the coordinate plane with the square of the distance from the point to the origin (a lattice point is a point such that both of its coordinates are integers). How many times does he label a point with the number $25$?,12,"The distance from a lattice point \((x, y)\) to the origin \((0, 0)\) is given by the formula:
+
+\[
+d = \sqrt{x^2 + y^2}
+\]
+
+The square of this distance is:
+
+\[
+d^2 = x^2 + y^2
+\]
+
+We need to find the number of integer solutions \((x, y)\) such that:
+
+\[
+x^2 + y^2 = 25
+\]
+
+This equation represents a circle of radius 5 centered at the origin. We will find integer pairs \((x, y)\) that satisfy this equation.
+
+We can consider the possible integer values for \(x\) and calculate \(y^2\):
+
+1. If \(x = 0\):
+   \[
+   y^2 = 25 \implies y = \pm 5 \quad \text{(2 solutions: (0, 5), (0, -5))}
+   \]
+
+2. If \(x = 1\):
+   \[
+   y^2 = 25 - 1^2 = 24 \quad \text{(no integer solutions)}
+   \]
+
+3. If \(x = 2\):
+   \[
+   y^2 = 25 - 2^2 = 21 \quad \text{(no integer solutions)}
+   \]
+
+4. If \(x = 3\):
+   \[
+   y^2 = 25 - 3^2 = 16 \implies y = \pm 4 \quad \text{(4 solutions: (3, 4), (3, -4), (-3, 4), (-3, -4))}
+   \]
+
+5. If \(x = 4\):
+   \[
+   y^2 = 25 - 4^2 = 9 \implies y = \pm 3 \quad \text{(4 solutions: (4, 3), (4, -3), (-4, 3), (-4, -3))}
+   \]
+
+6. If \(x = 5\):
+   \[
+   y^2 = 25 - 5^2 = 0 \implies y = 0 \quad \text{(2 solutions: (5, 0), (-5, 0))}
+   \]
+
+Now, we count all the solutions:
+
+- From \(x = 0\): 2 solutions
+- From \(x = 3\): 4 solutions
+- From \(x = 4\): 4 solutions
+- From \(x = 5\): 2 solutions
+
+Adding these gives:
+
+\[
+2 + 4 + 4 + 2 = 12
+\]
+
+Thus, the total number of times Chris labels a point with the number \(25\) is:
+
+The answer is 12."
+"An airplane climbs 100 feet during the first second after takeoff.  In each succeeding second it climbs 100 feet more than it climbed during the previous second.  How many  seconds does it take for the plane to reach an altitude of   12,000 feet above its takeoff height?",15,"Let the height climbed in the \( n \)-th second be represented as \( h_n \). The height climbed in the first second is \( h_1 = 100 \) feet. In each succeeding second, the plane climbs 100 feet more than the previous second, so:
+
+\[
+h_n = 100n
+\]
+
+The total height climbed after \( t \) seconds, \( H(t) \), is the sum of the heights climbed in each second:
+
+\[
+H(t) = h_1 + h_2 + \ldots + h_t = 100(1 + 2 + \ldots + t)
+\]
+
+Using the formula for the sum of the first \( t \) integers:
+
+\[
+1 + 2 + \ldots + t = \frac{t(t + 1)}{2}
+\]
+
+Thus, we can express \( H(t) \) as:
+
+\[
+H(t) = 100 \cdot \frac{t(t + 1)}{2} = 50t(t + 1)
+\]
+
+We need to find \( t \) such that \( H(t) = 12000 \):
+
+\[
+50t(t + 1) = 12000
+\]
+
+Dividing both sides by 50:
+
+\[
+t(t + 1) = 240
+\]
+
+This is a quadratic equation:
+
+\[
+t^2 + t - 240 = 0
+\]
+
+Using the quadratic formula \( t = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a} \):
+
+\[
+t = \frac{-1 \pm \sqrt{1^2 - 4 \cdot 1 \cdot (-240)}}{2 \cdot 1} = \frac{-1 \pm \sqrt{1 + 960}}{2} = \frac{-1 \pm \sqrt{961}}{2}
+\]
+
+Since \( \sqrt{961} = 31 \):
+
+\[
+t = \frac{-1 + 31}{2} = \frac{30}{2} = 15
+\]
+
+The negative solution is not applicable. Thus, the time taken for the plane to reach an altitude of 12,000 feet is:
+
+The answer is 15."
+"Define $f(x)=\frac{1+x}{1-x}$ and $g(x)=\frac{-2}{x+1}$. Find the value of \[g(f(g(f(\dotsb g(f(12)) \dotsb ))))\]where the function $f$ is applied 8 times, and the function $g$ is applied 8 times, alternating between the two.",4,"Let's first compute \( f(12) \):
+
+\[
+f(12) = \frac{1 + 12}{1 - 12} = \frac{13}{-11} = -\frac{13}{11}
+\]
+
+Next, we compute \( g(f(12)) = g\left(-\frac{13}{11}\right) \):
+
+\[
+g\left(-\frac{13}{11}\right) = \frac{-2}{-\frac{13}{11} + 1} = \frac{-2}{-\frac{13}{11} + \frac{11}{11}} = \frac{-2}{-\frac{2}{11}} = \frac{-2 \cdot -11}{2} = 11
+\]
+
+Now we compute \( f(g(f(12))) = f(11) \):
+
+\[
+f(11) = \frac{1 + 11}{1 - 11} = \frac{12}{-10} = -\frac{6}{5}
+\]
+
+Next, we compute \( g(f(g(f(12)))) = g\left(-\frac{6}{5}\right) \):
+
+\[
+g\left(-\frac{6}{5}\right) = \frac{-2}{-\frac{6}{5} + 1} = \frac{-2}{-\frac{6}{5} + \frac{5}{5}} = \frac{-2}{-\frac{1}{5}} = \frac{-2 \cdot -5}{1} = 10
+\]
+
+Continuing this process, we compute \( f(g(f(g(f(12))))) = f(10) \):
+
+\[
+f(10) = \frac{1 + 10}{1 - 10} = \frac{11}{-9} = -\frac{11}{9}
+\]
+
+Next, we compute \( g(f(g(f(g(f(12)))))) = g\left(-\frac{11}{9}\right) \):
+
+\[
+g\left(-\frac{11}{9}\right) = \frac{-2}{-\frac{11}{9} + 1} = \frac{-2}{-\frac{11}{9} + \frac{9}{9}} = \frac{-2}{-\frac{2}{9}} = \frac{-2 \cdot -9}{2} = 9
+\]
+
+Next, we compute \( f(g(f(g(f(g(f(12))))))) = f(9) \):
+
+\[
+f(9) = \frac{1 + 9}{1 - 9} = \frac{10}{-8} = -\frac{5}{4}
+\]
+
+Next, we compute \( g(f(g(f(g(f(g(f(12)))))))) = g\left(-\frac{5}{4}\right) \):
+
+\[
+g\left(-\frac{5}{4}\right) = \frac{-2}{-\frac{5}{4} + 1} = \frac{-2}{-\frac{5}{4} + \frac{4}{4}} = \frac{-2}{-\frac{1}{4}} = \frac{-2 \cdot -4}{1} = 8
+\]
+
+Next, we compute \( f(g(f(g(f(g(f(g(f(12))))))))) = f(8) \):
+
+\[
+f(8) = \frac{1 + 8}{1 - 8} = \frac{9}{-7} = -\frac{9}{7}
+\]
+
+Finally, we compute \( g(f(g(f(g(f(g(f(g(f(12)))))))))) = g\left(-\frac{9}{7}\right) \):
+
+\[
+g\left(-\frac{9}{7}\right) = \frac{-2}{-\frac{9}{7} + 1} = \frac{-2}{-\frac{9}{7} + \frac{7}{7}} = \frac{-2}{-\frac{2}{7}} = \frac{-2 \cdot -7}{2} = 7
+\]
+
+Thus, the final answer is:
+
+The answer is 7."
