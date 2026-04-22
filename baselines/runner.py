@@ -5,6 +5,7 @@ import os
 import re
 import time
 import unicodedata
+import inspect
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -21,13 +22,6 @@ from baselines.constants import (
     validate_dataset,
     validate_modality,
     validate_model,
-)
-from baselines.route_llm import (
-    ROUTELLM_AVAILABLE,
-    ROUTELLM_IMPORT_ERROR,
-    RoutellmConfig,
-    build_controller,
-    routellm_chat_completion,
 )
 from baselines.prompt_resolver import resolve_prompts
 from baselines.schema import UnifiedExperimentRecord
@@ -269,13 +263,18 @@ class RunSelection:
             if not (0.0 <= self.routellm_threshold <= 1.0):
                 raise ValueError("routellm_threshold must be in [0, 1].")
 
-    def routellm_config(self) -> RoutellmConfig:
-        return RoutellmConfig(
-            router=self.routellm_router.strip(),
-            threshold=float(self.routellm_threshold),
-            strong_model=self.routellm_strong_model.strip(),
-            weak_model=self.routellm_weak_model.strip(),
-        )
+    def routellm_config(self) -> dict[str, Any]:
+        cfg_dict = {
+            "router": self.routellm_router.strip(),
+            "threshold": float(self.routellm_threshold),
+            "strong_model": self.routellm_strong_model.strip(),
+            "weak_model": self.routellm_weak_model.strip(),
+        }
+        try:
+            from baselines.route_llm import RoutellmConfig
+            return RoutellmConfig(**cfg_dict)
+        except Exception:
+            return cfg_dict
 
 
 @dataclass(frozen=True)
@@ -755,6 +754,21 @@ def _print_verbose_run_trace(
     print(f"{bar}\n", flush=True)
 
 
+_VANILLA_ACCEPTS_SEED = "seed" in inspect.signature(vanilla_operator).parameters
+
+
+def _load_routellm_helpers() -> tuple[bool, str | None, Any, Any]:
+    """
+    Lazy-load RouteLLM helpers so non-RouteLLM runs do not require
+    `baselines.route_llm` to exist at import time.
+    """
+    try:
+        from baselines.route_llm import build_controller, routellm_chat_completion
+        return True, None, build_controller, routellm_chat_completion
+    except Exception as exc:  # pragma: no cover - runtime import path
+        return False, str(exc), None, None
+
+
 def run_selected(
     *,
     queries: list[QueryInput],
@@ -763,19 +777,40 @@ def run_selected(
     verbose_prompts: bool = False,
 ) -> list[UnifiedExperimentRecord]:
     llm = client or OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    groq_llm: Optional[OpenAI] = None
+
+    def _client_for_model(model_name: str) -> OpenAI:
+        nonlocal groq_llm
+        if "llama" not in model_name.lower():
+            return llm
+        if groq_llm is None:
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            if not groq_api_key:
+                raise RuntimeError(
+                    "GROQ_API_KEY is required for llama models but is not set."
+                )
+            groq_llm = OpenAI(
+                api_key=groq_api_key,
+                base_url="https://api.groq.com/openai/v1",
+            )
+        return groq_llm
+
     results: list[UnifiedExperimentRecord] = []
 
     wanted_datasets   = set(selection.datasets)
     wanted_modalities = set(selection.modalities)
 
     routellm_client: Optional[Any] = None
+    routellm_chat_fn: Optional[Any] = None
     if "routellm" in wanted_modalities:
-        if not ROUTELLM_AVAILABLE:
+        ok, import_error, build_controller_fn, routellm_chat_fn = _load_routellm_helpers()
+        if not ok:
             msg = "Modality 'routellm' needs the RouteLLM PyPI package."
-            if ROUTELLM_IMPORT_ERROR:
-                msg += f"\n\nImport diagnostic:\n  {ROUTELLM_IMPORT_ERROR}"
+            if import_error:
+                msg += f"\n\nImport diagnostic:\n  {import_error}"
             raise ImportError(msg)
-        routellm_client = build_controller(selection.routellm_config())
+        assert build_controller_fn is not None
+        routellm_client = build_controller_fn(selection.routellm_config())
 
     system_values_cache: dict[tuple[str, str], dict[str, Any]] = {
         (ds, mod): _build_system_values(selection, ds, mod)
@@ -801,6 +836,7 @@ def run_selected(
 
             # ── REACT ────────────────────────────────────────────────────
             if is_react:
+                call_client = _client_for_model(selection.model)
                 (
                     raw_output,
                     usage,
@@ -810,7 +846,7 @@ def run_selected(
                     react_system_prompt,
                     react_user_prompt,
                 ) = react_operator(
-                    client=llm,
+                    client=call_client,
                     model_name=selection.model,
                     question=query.query,
                     query_input=query,
@@ -836,7 +872,8 @@ def run_selected(
                     system_values=system_values, user_values=user_values,
                 )
                 assert routellm_client is not None
-                raw_output, usage, error, elapsed, resolved_model = routellm_chat_completion(
+                assert routellm_chat_fn is not None
+                raw_output, usage, error, elapsed, resolved_model = routellm_chat_fn(
                     routellm_client, cfg=selection.routellm_config(),
                     system_prompt=resolved.system_prompt,
                     user_prompt=resolved.user_prompt,
@@ -850,6 +887,7 @@ def run_selected(
 
             # ── VANILLA / COT / MULTIAGENT ───────────────────────────────
             else:
+                call_client = _client_for_model(selection.model)
                 system_values = system_values_cache[(query.dataset, modality)]
                 user_values   = _build_user_values(query, modality)
                 resolved = resolve_prompts(
@@ -859,14 +897,17 @@ def run_selected(
                 )
                 # BUG FIX 1: original had a typo `vanallia_operator` which
                 # caused NameError on every vanilla / cot / multiagent call.
-                raw_output, usage, error, elapsed = vanilla_operator(
-                    client=llm, model_name=selection.model,
-                    question=resolved.user_prompt,
-                    system_prompt=resolved.system_prompt,
-                    max_tokens=selection.max_tokens,
-                    temperature=selection.temperature,
-                    seed=selection.seed,
-                )
+                vanilla_kwargs: dict[str, Any] = {
+                    "client": call_client,
+                    "model_name": selection.model,
+                    "question": resolved.user_prompt,
+                    "system_prompt": resolved.system_prompt,
+                    "max_tokens": selection.max_tokens,
+                    "temperature": selection.temperature,
+                }
+                if _VANILLA_ACCEPTS_SEED:
+                    vanilla_kwargs["seed"] = selection.seed
+                raw_output, usage, error, elapsed = vanilla_operator(**vanilla_kwargs)
                 predicted, _    = _extract_short_answer(raw_output, query.dataset)
                 reasoning_steps = _count_reasoning_steps(raw_output, predicted)
                 tool_trace_json = None

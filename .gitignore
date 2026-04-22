@@ -7,6 +7,8 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
+
+
 # Data (don't commit raw or processed data, but keep READMEs + scripts)
 datasets/raw/*
 datasets/golden/*
@@ -17,8 +19,9 @@ datasets/cache/*
 !datasets/cache/README.md
 !datasets/download_datasets.py
 datasets/baselines/*
-
+notebooks/*
 notebooks/data/*
+results/*
 
 .DS_Store
 test.py

@@ -12,6 +12,7 @@ def vanilla_operator(
     system_prompt: str,
     max_tokens: int = 1024,
     temperature: float = 0.0,
+    seed: Optional[int] = None,
 ) -> Tuple[str, dict, Optional[str], float]:
     """Call an OpenAI-compatible chat model and return response details.
 
@@ -32,15 +33,18 @@ def vanilla_operator(
 
     start = time.perf_counter()
     try:
-        response = client.chat.completions.create(
-            model=model_name,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=[
+        create_kwargs = {
+            "model": model_name,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question},
             ],
-        )
+        }
+        if seed is not None:
+            create_kwargs["seed"] = seed
+        response = client.chat.completions.create(**create_kwargs)
         predicted = (response.choices[0].message.content or "").strip()
         
         usage = {

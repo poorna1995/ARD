@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import random
 import sys
 import warnings
 import zlib
@@ -151,6 +153,22 @@ def parse_args() -> argparse.Namespace:
     args.datasets   = _normalize_multi_choices(parser, args.datasets,   ALLOWED_DATASETS,   "--datasets")
     args.modalities = _normalize_multi_choices(parser, args.modalities, ALLOWED_MODALITIES, "--modalities")
     return args
+
+
+def _set_global_random_seed(seed: int) -> None:
+    """
+    Best-effort process-level reproducibility.
+
+    This keeps dataset sampling/shuffling and any Python-level randomness
+    aligned across modalities when users compare runs.
+    """
+    os.environ["PYTHONHASHSEED"] = str(int(seed))
+    random.seed(int(seed))
+    try:
+        import numpy as np  # local import: optional dependency
+        np.random.seed(int(seed))
+    except Exception:
+        pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -466,6 +484,9 @@ def list_mmlu_categories_from_paths(dataset_paths: dict[str, str]) -> None:
 def main() -> None:
     args = parse_args()
 
+    if not args.no_seed:
+        _set_global_random_seed(args.seed)
+
     dataset_paths = dict(DATASET_PATHS)
     if AUTO_DISCOVER_PROCESSED:
         dataset_paths.update(discover_processed_dataset_paths(PROCESSED_DIR))
@@ -508,6 +529,15 @@ def main() -> None:
         raise ValueError("MMLU per-category flags require mmlu_pro in --datasets.")
 
     mmlu_samples_parsed = _parse_mmlu_category_samples(args.mmlu_category_samples)
+    # If users requested MMLU random per-category sampling but did not provide a
+    # dedicated sampling seed, default to the run seed for cross-modality parity.
+    mmlu_sample_seed = args.mmlu_sample_seed
+    if (
+        mmlu_sample_seed is None
+        and not args.no_seed
+        and mmlu_samples_parsed is not None
+    ):
+        mmlu_sample_seed = args.seed
 
     queries = load_queries(
         dataset_paths,
@@ -515,7 +545,7 @@ def main() -> None:
         mmlu_categories=mmlu_cat,
         mmlu_per_category_limit=args.mmlu_per_category_limit,
         mmlu_category_samples=mmlu_samples_parsed,
-        mmlu_sample_seed=args.mmlu_sample_seed,
+        mmlu_sample_seed=mmlu_sample_seed,
     )
 
     from baselines.runner import run_selected
