@@ -17,7 +17,6 @@ datasets/cache/*
 !datasets/raw/README.md
 !datasets/processed/README.md
 !datasets/cache/README.md
-!datasets/download_datasets.py
 datasets/baselines/*
 notebooks/*
 notebooks/data/*

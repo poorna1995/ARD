@@ -14,7 +14,6 @@ from openai import OpenAI
 
 load_dotenv()
 
-from agents.react_operator import react_operator
 from agents.vanilla_operator import vanilla_operator          # BUG FIX 1 (see § 8)
 from baselines.constants import (
     ALLOWED_DATASETS,
