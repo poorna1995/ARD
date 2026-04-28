@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""
-experiments/download_dataset.py
-────────────────────────────────────────────────────────────────
-Download a SINGLE dataset, inspect it, and save to parquet.
-
-Usage (from project root):
-    python experiments/download_dataset.py --dataset gaia
-    python experiments/download_dataset.py --dataset mmlu_pro
-    python experiments/download_dataset.py --dataset swe_bench
-    python experiments/download_dataset.py --dataset math_hard
-
-What it does:
-    1. Downloads the dataset from HuggingFace
-    2. Processes it into canonical columns (id, query, answer, ...)
-    3. Saves to datasets/processed/<name>.parquet
-    4. Prints a full inspection report:
-         - shape, columns, null counts
-         - sample rows
-         - complexity_gt distribution (if available)
-         - query length stats
-"""
 
 import argparse
 import os

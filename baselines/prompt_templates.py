@@ -35,8 +35,7 @@ SYSTEM_PROMPTS_V1: dict[tuple[str, str], str] = {
         "Model: {model_name}"
     ),
     _k("vanilla", "math_hard"): (
-        "You are an expert mathematician.\n"
-        "\n"
+        "You are an expert math problem solver.\n"
         "Rules:\n"
         "- Return ONLY the final mathematical answer.\n"
         "- Preserve exact forms when possible (fractions, radicals, intervals).\n"

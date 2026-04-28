@@ -1,0 +1,26 @@
+{
+  "dataset": "math_hard",
+  "modality": "zero_shot_cot",
+  "model": "gpt-4o-mini",
+  "system_prompt_version": "v1",
+  "user_prompt_version": "v1",
+  "prompt_hash": "87a4b3526b86c7dbcfad9cdb41aa60e4cb537aab9fbe410c43ced4209ec681a9",
+  "total_queries": 10,
+  "correct_queries": 0,
+  "accuracy": 0.0,
+  "total_prompt_tokens": 0,
+  "total_completion_tokens": 0,
+  "total_tokens": 0,
+  "avg_tokens_per_query": 0.0,
+  "total_cost_usd": 0.0,
+  "avg_latency_s": 2.617,
+  "p50_latency_s": 2.362,
+  "p95_latency_s": 3.832,
+  "error_count": 10,
+  "error_rate": 1.0,
+  "avg_reasoning_steps": 0.0,
+  "avg_tool_calls": null,
+  "metadata": {
+    "cot_variant": "zero_shot_cot"
+  }
+}

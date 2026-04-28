@@ -1,0 +1,49 @@
+{
+  "dataset": "gaia",
+  "modality": "routellm_mf",
+  "strong_model": "gpt-4o",
+  "weak_model": "gpt-4o-mini",
+  "router": "mf",
+  "threshold": 0.30765,
+  "system_prompt_version": "v1",
+  "total_queries": 165,
+  "correct_queries": 12,
+  "accuracy": 0.072727,
+  "total_prompt_tokens": 33642,
+  "total_completion_tokens": 2105,
+  "total_tokens": 35747,
+  "avg_tokens_per_query": 216.648,
+  "total_cost_usd": 0.050597,
+  "strong_model_cost_usd": 0.04569,
+  "weak_model_cost_usd": 0.004907,
+  "avg_latency_s": 1.873,
+  "p50_latency_s": 0.966,
+  "p95_latency_s": 1.675,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "routing_split": {
+    "strong_count": 42,
+    "weak_count": 123,
+    "strong_pct": 25.45,
+    "weak_pct": 74.55
+  },
+  "metadata": {
+    "gaia_level_metrics": {
+      "1": {
+        "total": 53,
+        "correct": 3,
+        "accuracy": 0.056604
+      },
+      "2": {
+        "total": 86,
+        "correct": 9,
+        "accuracy": 0.104651
+      },
+      "3": {
+        "total": 26,
+        "correct": 0,
+        "accuracy": 0.0
+      }
+    }
+  }
+}

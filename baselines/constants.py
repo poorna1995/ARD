@@ -18,6 +18,7 @@ ALLOWED_MODALITIES: tuple[str, ...] = (
 )
 
 ALLOWED_MODELS: tuple[str, ...] = (
+    "llama-3.3-70b-versatile",
     "gpt-4o-mini",
     "gpt-4o",
     "routellm",

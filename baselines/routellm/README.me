@@ -1,0 +1,37 @@
+## routellm
+1. Query to Embedding
+2. Matrix Factorization Scoring ( Q = qUERY (vocab, hidden_dim),M = Model(2, hidden_dim))
+3. score = sigmoid(embedding @ M[strong] - embedding @ M[weak])
+4. Compare Against Threshold
+5. score = P(GPT-4o wins over Mixtral | this query) -> score = 0.083  →  8%  chance GPT-4 needed  → easy query
+where dif The mf MODEL Learn this?
+From Chatbot Arena human voting data:
+1. Human sees:  Response A (GPT-4)  vs  Response B (Mixtral)
+2. Human votes: "A is better"
+
+Model learns:
+  - Queries like this → GPT-4 wins     → high score
+  - Queries like this → Mixtral is fine → low score
+
+After millions of votes:
+  - Simple chat       → low score  (0.08 - 0.15)
+  - Math/reasoning    → high score (0.45 - 0.55)
+  - Coding            → high score (0.40 - 0.52)
+  - Factual lookup    → low score  (0.10 - 0.20)
+
+Why Your GAIA Scores Are Low (0.083 → 0.527)
+1. Which zip codes had nonnative clownfish before 2020?" -->  MF router sees:
+  - Looks like a factual lookup  → low score (0.11)
+  - Arena humans preferred Mixtral for similar questions 
+  --> But reality:
+  - GAIA needs web search + reasoning → actually very hard
+  - Router was never trained on research benchmark queries
+Result: Router underestimates GAIA difficulty
+        → sends too many hard queries to GPT-4o-mini
+        → lower accuracy than expected
+
+
+# Scores tell you about your dataset difficulty
+print(f"Avg score : {np.mean(scores):.3f}")   # → 0.256 (mostly easy)
+print(f"Max score : {np.max(scores):.3f}")    # → 0.527 (hardest query)
+print(f"Min score : {np.min(scores):.3f}")    # → 0.083 (easiest query)
