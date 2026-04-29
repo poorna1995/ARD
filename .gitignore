@@ -35,13 +35,13 @@ notebooks/graph2.ipynb
 notebooks/hidden_State.ipynb
 notebooks/model_agnostic.ipynb
 notebooks/test_Cot.ipynb
-
+test_router.py
+src/loaders/download_gia_attachments.py
 # Outputs (commit selectively)
 logs/
 outputs/*.png
 outputs/*.csv
 uv.lock
-Cot.py
 vanallia.py
 # Jupyter checkpoints
 .ipynb_checkpoints/
