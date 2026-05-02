@@ -1,1 +1,0 @@
-{"event": "episode_start", "episode_id": "34469e66-99aa-47e0-89a1-767eac23cf5a", "query": "According to github, when was Regression added to the oldest closed numpy.polynomial issue that has the Regression label in MM/DD/YY?", "dataset": "GAIA", "confidence_score": 0.7, "sub_approach": "react", "model": "llama-3.3-70b-versatile"}
