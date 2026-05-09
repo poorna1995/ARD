@@ -1,0 +1,43 @@
+{
+  "dataset": "gaia",
+  "modality": "zero_shot_cot",
+  "model": "llama-3.3-70b-versatile",
+  "system_prompt_version": "v1",
+  "user_prompt_version": "v1",
+  "prompt_hash": "36e0ffc4e4edc8515f2be59afbc14c2c19f33baf7a147fabdfcfcb762e46230d",
+  "total_queries": 165,
+  "correct_queries": 6,
+  "accuracy": 0.036364,
+  "total_prompt_tokens": 21903,
+  "total_completion_tokens": 12010,
+  "total_tokens": 33913,
+  "avg_tokens_per_query": 205.533,
+  "total_cost_usd": 0.0,
+  "avg_latency_s": 1.089,
+  "p50_latency_s": 0.455,
+  "p95_latency_s": 2.894,
+  "error_count": 78,
+  "error_rate": 0.472727,
+  "avg_reasoning_steps": 0.527,
+  "avg_tool_calls": null,
+  "metadata": {
+    "cot_variant": "zero_shot_cot",
+    "gaia_level_metrics": {
+      "1": {
+        "total": 53,
+        "correct": 4,
+        "accuracy": 0.075472
+      },
+      "2": {
+        "total": 86,
+        "correct": 1,
+        "accuracy": 0.011628
+      },
+      "3": {
+        "total": 26,
+        "correct": 1,
+        "accuracy": 0.038462
+      }
+    }
+  }
+}

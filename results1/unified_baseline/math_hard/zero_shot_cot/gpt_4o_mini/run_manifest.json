@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-04-22T12:56:05.760792+00:00",
+  "bucket": {
+    "dataset": "math_hard",
+    "modality": "zero_shot_cot",
+    "model": "gpt-4o-mini",
+    "n_records": 10,
+    "prompt_hash": "87a4b3526b86c7dbcfad9cdb41aa60e4cb537aab9fbe410c43ced4209ec681a9",
+    "system_prompt_version": "v1",
+    "user_prompt_version": "v1"
+  },
+  "git": {
+    "commit": "b4af6abdcd5a38c7a6d2e70a5f196ca08fa88c58",
+    "is_dirty": true,
+    "error": null
+  },
+  "environment": {
+    "python": "3.12.4",
+    "platform": "darwin",
+    "openai_package": "2.32.0"
+  },
+  "cli_args": {
+    "datasets": [
+      "math_hard"
+    ],
+    "modalities": [
+      "zero_shot_cot"
+    ],
+    "model": "gpt-4o-mini",
+    "max_tokens": 1024,
+    "temperature": 0.0,
+    "seed": 42,
+    "no_seed": false,
+    "sample_limit": 10,
+    "results_dir": "results1/unified_baseline",
+    "max_steps": 6,
+    "tool_budget": 4,
+    "routellm_router": "mf",
+    "routellm_threshold": 0.11593,
+    "routellm_strong_model": "gpt-4o",
+    "routellm_weak_model": "gpt-4o-mini",
+    "mmlu_categories": null,
+    "list_mmlu_categories": false,
+    "mmlu_per_category_limit": null,
+    "mmlu_category_samples": null,
+    "mmlu_sample_seed": null,
+    "verbose_prompts": false
+  },
+  "run_selection": {
+    "datasets": [
+      "math_hard"
+    ],
+    "modalities": [
+      "zero_shot_cot"
+    ],
+    "model": "gpt-4o-mini",
+    "max_tokens": 1024,
+    "temperature": 0.0,
+    "seed": 42,
+    "max_steps": 6,
+    "tool_budget": 4,
+    "routellm_router": "mf",
+    "routellm_threshold": 0.11593,
+    "routellm_strong_model": "gpt-4o",
+    "routellm_weak_model": "gpt-4o-mini"
+  },
+  "dataset_files": {
+    "math_hard": {
+      "path": "/Users/poorna/Desktop/research_work/datasets/processed/math_hard.parquet",
+      "size_bytes": 623778,
+      "sha256": "d5eab0954466f4c2ed942401f77c84ff7979c6517802de24dd373c13be2eb2fe"
+    }
+  }
+}
