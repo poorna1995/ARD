@@ -20,7 +20,11 @@ datasets/cache/*
 datasets/baselines/*
 notebooks/*
 notebooks/data/*
-results/*
+test_tools_smoke.py
+test_tools.py
+
+
+
 
 .DS_Store
 test.py
@@ -37,15 +41,35 @@ notebooks/model_agnostic.ipynb
 notebooks/test_Cot.ipynb
 test_router.py
 src/loaders/download_gia_attachments.py
+agents/
+baselines/
+complexity/
+notebooks/
+results_v1/
+results1/
+scripts/
+agent/muliatgent1.py
+results/
+results_v2/
+results/
+final_results/
+results1/
 # Outputs (commit selectively)
 logs/
 outputs/*.png
 outputs/*.csv
 uv.lock
 vanallia.py
+run.py
+dashboard.py
+
+
 # Jupyter checkpoints
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
+
+
+
 
 # IDE
 .vscode/

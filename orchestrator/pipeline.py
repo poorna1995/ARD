@@ -17,23 +17,7 @@ from difficulty.feature_measure import TaskComplexityAnalyzer
 from prompts.prompts import DATASETS
 from routing.router import Router
 
-DEFAULT_OUTPUT_ROOT = Path("results1/unified_baseline")
-COMPACT_FIELDS = (
-    "answer",
-    "latency_total",
-    "latency_llm",
-    "latency_tools",
-    "prompt_tokens",
-    "completion_tokens",
-    "total_tokens",
-    "cost_usd",
-    "num_llm_calls",
-    "num_steps",
-    "num_tool_calls",
-    "is_correct",
-    "error",
-    "is_failed",
-)
+DEFAULT_OUTPUT_ROOT = Path("results_v2/baseline_method/gaia/baseline_v2/feature_method/gpt-4o-mini/feature_v4")
 
 
 def load_dataset(dataset: str, path: str | Path | None = None) -> pd.DataFrame:
@@ -47,16 +31,34 @@ def load_dataset(dataset: str, path: str | Path | None = None) -> pd.DataFrame:
         return pd.read_parquet(path, columns=["query"])
 
 
-def _response_to_dict(response: Any, compact: bool) -> dict[str, Any]:
+def _response_to_dict(response: Any) -> dict[str, Any]:
     if hasattr(response, "__dataclass_fields__"):
         payload = asdict(response)
     elif isinstance(response, dict):
         payload = response
     else:
-        payload = {"multiagent_response": str(response)}
-    if not compact:
-        return payload
-    return {k: payload.get(k) for k in COMPACT_FIELDS}
+        payload = {"react_response": str(response)}
+    return payload
+
+
+def _dataframe_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    """PyArrow cannot write some nested types (e.g. empty dict as struct). JSON-encode dict/list cells."""
+    out = df.copy()
+    for col in out.columns:
+        series = out[col]
+        if series.dtype != object:
+            continue
+        has_container = series.map(lambda x: isinstance(x, (dict, list))).any()
+        if not has_container:
+            continue
+        out[col] = series.map(
+            lambda x: (
+                json.dumps(x, ensure_ascii=False, default=str)
+                if isinstance(x, (dict, list))
+                else x
+            )
+        )
+    return out
 
 
 def run_pipeline(
@@ -65,9 +67,7 @@ def run_pipeline(
     output_path: str | Path | None = None,
     jsonl_output_path: str | Path | None = None,
     execute_agents: bool = True,
-    assigned_multiagent_only: bool = True,
     limit: int | None = None,
-    compact_response: bool = True,
     verbose: bool = True,
 ) -> pd.DataFrame:
     if dataset not in DATASETS:
@@ -109,24 +109,19 @@ def run_pipeline(
             **routed,
         }
         if execute_agents:
-            if assigned_multiagent_only and routed.get("assigned_agent") != "multiagent":
-                if verbose:
-                    print(
-                        f"[{idx}/{total}] Skipping execution in multiagent-only mode "
-                        f"(assigned_agent={routed.get('assigned_agent')})"
-                    )
-                append_record(record)
-                continue
             if verbose:
                 print(f"[{idx}/{total}] Executing agent...")
             try:
                 run_result = router.run(expected_answer=expected)
-                response = _response_to_dict(run_result.get("response"), compact=compact_response)
+                response = _response_to_dict(run_result.get("response"))
                 record.update(
                     {
-                        "run_agent": run_result.get("agent"),
-                        "run_model": run_result.get("model"),
-                        "run_overall": run_result.get("overall"),
+                        "assigned_agent": run_result.get("agent"),
+                        "model": run_result.get("model"),
+                        "effective_config": run_result.get("effective_config"),
+                        "config_used_aliases": run_result.get("config_used_aliases"),
+                        "config_unknown_keys": run_result.get("config_unknown_keys"),
+                        # "run_overall": run_result.get("overall"),
                         **{f"response_{k}": v for k, v in response.items()},
                     }
                 )
@@ -143,10 +138,10 @@ def run_pipeline(
             except Exception as exc:
                 record.update(
                     {
-                        "run_agent": routed.get("assigned_agent"),
-                        "run_model": routed.get("model_primary"),
-                        "response_error": str(exc),
-                        "response_is_failed": True,
+                        "assigned_agent": routed.get("assigned_agent"),
+                        "model": routed.get("model_primary"),
+                        # "response_error": str(exc),
+                        "is_failed": True,
                     }
                 )
                 if verbose:
@@ -156,11 +151,12 @@ def run_pipeline(
         append_record(record)
 
     results_df = pd.DataFrame.from_records(records)
-    output = Path(output_path) if output_path is not None else DEFAULT_OUTPUT_ROOT / dataset / "orchestrator_pipeline.parquet"
+    output = Path(output_path) if output_path is not None else DEFAULT_OUTPUT_ROOT /"orchestrator_pipeline_v3.parquet"
     output.parent.mkdir(parents=True, exist_ok=True)
     if "overall" not in results_df.columns:
         raise RuntimeError("Missing 'overall' in results; routing output is incomplete.")
-    results_df.to_parquet(output, index=False)
+    parquet_df = _dataframe_for_parquet(results_df)
+    parquet_df.to_parquet(output, index=False)
     print(f"Saved pipeline results to: {output}")
 
     jsonl_output = (
@@ -189,14 +185,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Only route tasks; skip agent execution.",
     )
     parser.add_argument(
-        "--assigned_multiagent_only",
+        "--assigned_react_only",
         action="store_true",
-        help="Execute only queries assigned to multiagent; skip all others.",
+        help="Execute only queries assigned to react; skip all others.",
     )
     parser.add_argument(
         "--all_assigned_agents",
         action="store_true",
-        help="Override multiagent-only mode and execute whichever agent is assigned.",
+        help="Override react-only mode and execute whichever agent is assigned.",
     )
     parser.add_argument(
         "--full_response",
@@ -220,8 +216,6 @@ if __name__ == "__main__":
         output_path=args.output_path,
         jsonl_output_path=args.jsonl_output_path,
         execute_agents=not args.route_only,
-        assigned_multiagent_only=(not args.all_assigned_agents),
         limit=args.limit,
-        compact_response=not args.full_response,
         verbose=not args.quiet,
     )

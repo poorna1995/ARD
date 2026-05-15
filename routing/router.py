@@ -6,16 +6,18 @@ import sys
 from pathlib import Path
 from difficulty.feature_measure import TaskComplexityAnalyzer
 import pandas as pd
+from collections import Counter
 
 from prompts.prompts import DATASETS, AGENTS
+from agent.config import normalize_agent_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # ✅ Simplest - direct string key access
 MODELS = {
-    "raw":        {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
-    "cot":        {"primary": "llama-3.3-70b-versatile",                  "secondary": "gpt-4o"},
-    "react":      {"primary": "llama-3.3-70b-versatile",                  "secondary": "gpt-4o"},
-    "multiagent": {"primary": "llama-3.3-70b-versatile",                  "secondary": "gpt-4o"},
+    "raw":        {"primary": "llama-3.3-70b-versatile, "secondary": "gpt-4o"},
+    "cot":        {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
+    "react":      {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
+    "multiagent": {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
 }
 AGENT_MODULES = {
     "raw": "agent.raw",
@@ -40,7 +42,9 @@ class Router:
         self.dataset = dataset
         self.other_parameters = kwargs
 
-        analysis = analyzer.analyze(query)
+        # Use evaluate(), not analyze(): analyze() mutates score history and
+        # recomputes percentiles on every call, so thresholds drift row-by-row.
+        analysis = analyzer.evaluate(query)
         self.overall = analysis.overall
         self.task_length = analysis.task_length
         self.reasoning_depth = analysis.reasoning_depth
@@ -61,22 +65,9 @@ class Router:
             "domain_breadth": self.domain_breadth,
             "task_type": self.task_type,
             "assigned_agent": self.agent,
-            "model_primary": self.get_model(),
-            "model_secondary": self.get_model(use_secondary=True),
+            "model_primary": self._get_model(),
+            "model_secondary": self._get_model(use_secondary=True),
         }
-
-    # def _assign_agent(self) -> str:
-    #     score = self.overall
-    #     threshold = self.analyzer.thresholds
-
-    #     if score < threshold["raw"] and self.task_length < 7 and self.domain_breadth < 1:
-    #         return "raw"
-    #     elif score < threshold["cot"] and self.reasoning_depth < 1:
-    #         return "cot"
-    #     elif score < threshold["react"] and self.tool_dependency < 4:
-    #         return "react"
-    #     else:
-    #         return "multiagent"
 
 
     def _assign_agent(self) -> str:
@@ -93,8 +84,12 @@ class Router:
                 and self.task_length    < tl["raw"]):
             return "raw"
 
-        if (self.overall         < ov["cot"]
-                and self.reasoning_depth < rd["cot"]):
+        # CoT: reasoning-only path (no tools in CotAgent). Skip cot when tools look necessary.
+        if (
+            self.overall < ov["cot"]
+            and self.reasoning_depth < rd["cot"]
+            and self.tool_dependency < td["cot"]
+        ):
             return "cot"
 
         if (self.overall         < ov["react"]
@@ -104,7 +99,7 @@ class Router:
         return "multiagent"
 
 
-    def get_model(self, use_secondary: bool = False) -> str:
+    def _get_model(self, use_secondary: bool = False) -> str:
         key = 'secondary' if use_secondary else 'primary'
         return self.model[key]
 
@@ -115,25 +110,47 @@ class Router:
 
         agent_module = import_module(AGENT_MODULES[self.agent])
         agent_fn = agent_module.run
-        response = agent_fn(
-            query   = self.query,
-            model   = self.get_model(),
-            dataset = self.dataset,
-            expected_answer  = expected_answer,
-            **self.other_parameters,
+        normalized = normalize_agent_config(
+            model=self._get_model(),
+            dataset=self.dataset,
+            kwargs=self.other_parameters,
         )
+        cfg = normalized.config
+        agent_kwargs = {**cfg.agent_params}
+        if "temperature" in self.other_parameters:
+            agent_kwargs["temperature"] = cfg.temperature
+        if "max_tokens" in self.other_parameters:
+            agent_kwargs["max_tokens"] = cfg.max_tokens
+        if "seed" in self.other_parameters:
+            agent_kwargs["seed"] = cfg.seed
+        response = agent_fn(
+            query=self.query,
+            model=cfg.model,
+            dataset=cfg.dataset,
+            expected_answer=expected_answer,
+            **agent_kwargs,
+        )
+        effective_config = {
+            "model": cfg.model,
+            "dataset": cfg.dataset,
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "seed": cfg.seed,
+            **cfg.agent_params,
+        }
         return {
             "query":            self.query,
             "agent":            self.agent,
-            "model":            self.get_model(),
+            "model":            cfg.model,
             "overall":          self.overall,
             "response":         response,
+            "effective_config": effective_config,
+            "config_used_aliases": normalized.used_aliases,
+            "config_unknown_keys": normalized.unknown_keys,
 
 
 
         }
-
-from collections import Counter
 
 def evaluate_routing(df, analyzer):
     counts = Counter()

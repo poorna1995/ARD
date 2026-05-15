@@ -725,9 +725,9 @@ class TaskComplexityAnalyzer:
         "web_search":    {"weight": 1.0, "strong": ["search the web", "find online", "look it up", "breaking news", "real time", "live data", "latest news", "current events"],           "weak": ["search", "latest", "current", "recent", "today", "news", "update", "wikipedia", "wiki"]},
         "code_executor": {"weight": 1.4, "strong": ["run code", "execute script", "run this python", "debug this", "compile and run", "run the program"],                                  "weak": ["python", "script", "execute", "runtime", "output"]},
         "calculator":    {"weight": 0.8, "strong": ["calculate", "solve the equation", "evaluate the formula", "compute the result", "numerical solution"],                               "weak": ["compute", "math", "equation", "formula", "solve"]},
-        "file_ops":      {"weight": 0.9, "strong": ["open file", "read the file", "write to file", "save to disk", "export file", "load from file"],                                      "weak": ["file", "document", "save", "load", "export", "import"]},
+        "file_ops":      {"weight": 0.9, "strong": ["attached file", "read the file", "write to file", "save to disk", "export file", "load from file, .pdf, .xlsv, .docx,"],                                      "weak": ["file", "document", "save", "load", "export", "import"]},
         "api":           {"weight": 1.3, "strong": ["call the api", "api endpoint", "rest api", "fetch from api", "webhook", "api request", "live data feed", "stream data"],             "weak": ["api", "endpoint", "request", "rest", "fetch"]},
-        "database":      {"weight": 1.2, "strong": ["sql query", "run a query", "fetch records", "insert into", "update row", "retrieve from database", "join tables"],                   "weak": ["database", "sql", "table", "query"]},
+        "database":      {"weight": 1.2, "strong": ["sql query", "run a query", "fetch records", "insert into", "update row", "retrieve from database", "join tables",'.mp3','.py'],                   "weak": ["database", "sql", "table", "query"]},
         "image":         {"weight": 0.9, "strong": ["generate image", "plot the graph", "create chart", "visualize the data", "render diagram", "draw a graph"],                         "weak": ["image", "chart", "graph", "plot", "diagram", "photo"]},
         "video":         {"weight": 1.1, "strong": ["live stream", "broadcast", "video call", "record video", "stream this"],                                                             "weak": ["video", "movie", "stream", "multimedia"]},
     }
@@ -764,37 +764,7 @@ class TaskComplexityAnalyzer:
             "domain_breadth": [], "task_type": [],
         }
         self._query_scores: dict[str, float] = {}
-        # verbose: bool = False) -> None:
-        # self._validate_percentiles(threshold_percentiles)
-        # normalized = self._normalize_weights(weights or dict(self.DEFAULT_WEIGHTS))
-        # self._check_weights(normalized)
-        # self.weights               = normalized
-        # self.threshold_percentiles = threshold_percentiles
-        # self.thresholds: dict[str, float] | None = None
-        # self.mattr_window          = mattr_window
-        # self.verbose               = verbose
-        # self._score_history: list[float] = []
 
-    # ── Public API ────────────────────────────────────────────────────────────
-
-    # def analyze(self, query: str) -> TaskComplexityScore:
-    #     text   = query.lower()
-    #     scores = self._compute_scores(text)
-    #     overall = sum(self.weights[d] * s for d, s in scores.items())
-
-    #     self._score_history.append(overall)
-    #     self._recompute_thresholds()
-
-    #     return TaskComplexityScore(
-    #         overall         = round(overall, 3),
-    #         task_length     = round(scores["task_length"], 3),
-    #         reasoning_depth = round(scores["reasoning_depth"], 3),
-    #         tool_dependency = round(scores["tool_dependency"], 3),
-    #         domain_breadth  = round(scores["domain_breadth"], 3),
-    #         task_type       = round(scores["task_type"], 3),
-    #         # complexity_band = self._complexity_band(overall),
-    #         breakdown       = scores,
-    #     )
     def analyze(self, query: str) -> TaskComplexityScore:
         text    = query.lower()
         scores  = self._compute_scores(text)
@@ -806,6 +776,7 @@ class TaskComplexityAnalyzer:
         self._recompute_thresholds()
 
         return TaskComplexityScore(
+
             overall         = round(overall, 3),
             task_length     = round(scores["task_length"], 3),
             reasoning_depth = round(scores["reasoning_depth"], 3),
@@ -850,7 +821,6 @@ class TaskComplexityAnalyzer:
                 for band, p in zip(bands, pcts)
             }
         }
-
         # Only computed after fit() — guard with hasattr
         if hasattr(self, "_feature_history"):
             for feat, values in self._feature_history.items():
@@ -861,7 +831,6 @@ class TaskComplexityAnalyzer:
                     band: self._percentile(sorted_vals, p)
                     for band, p in zip(bands, pcts)
                 }
-                
     def get_score(self, query: str) -> float:
         """
         For routing. Cached for corpus queries, fresh + tracked for new ones.
@@ -875,6 +844,21 @@ class TaskComplexityAnalyzer:
         self._score_history.append(overall)
         self._recompute_thresholds()
         return overall
+
+    def evaluate(self, query: str) -> TaskComplexityScore:
+        """Full TCE breakdown without updating internal fit/history state."""
+        text = query.lower()
+        scores = self._compute_scores(text)
+        overall = sum(self.weights[d] * s for d, s in scores.items())
+        return TaskComplexityScore(
+            overall=round(overall, 3),
+            task_length=round(scores["task_length"], 3),
+            reasoning_depth=round(scores["reasoning_depth"], 3),
+            tool_dependency=round(scores["tool_dependency"], 3),
+            domain_breadth=round(scores["domain_breadth"], 3),
+            task_type=round(scores["task_type"], 3),
+            breakdown=scores,
+        )
 
     def analyze_batch(self, queries: list[str]) -> list[dict]:
         return [{**self.analyze(q).to_dict(), "query": q} for q in queries]
@@ -1022,7 +1006,6 @@ class TaskComplexityAnalyzer:
             raise ValueError(f"Percentiles must be strictly increasing within (0,100). Got: {percentiles}.")
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     from collections import Counter
@@ -1033,8 +1016,10 @@ if __name__ == "__main__":
     input_path  = repo_root / "datasets" / "golden" / "gaia.parquet"
     output_path = repo_root / "results1" / "unified_baseline" / "gaia" / "features_complexity.parquet"
 
-    df      = pd.read_parquet(input_path)
-    queries = df["query"].dropna().astype(str).tolist()
+    df = pd.read_parquet(input_path)
+    df = df.dropna(subset=["query"])
+    queries = df["query"].astype(str).tolist()
+    task_ids = df["id"].tolist()
 
     analyzer = TaskComplexityAnalyzer(threshold_percentiles=(20, 50, 90))
 
@@ -1043,14 +1028,21 @@ if __name__ == "__main__":
     print(f"Thresholds: {analyzer.thresholds}")
 
     print("Analyzing all queries...")
-    results = [{"query": q, "overall": analyzer.get_score(q)} for q in queries]
+    results = []
+    for task_id, q in zip(task_ids, queries):
+        s = analyzer.evaluate(q)
+        results.append({
+            "task_id": task_id,
+            "query": q,
+            "task_length": s.task_length,
+            "reasoning_depth": s.reasoning_depth,
+            "tool_dependency": s.tool_dependency,
+            "domain_breadth": s.domain_breadth,
+            "task_type": s.task_type,
+            "overall": s.overall,
+        })
     for r in results:
         print(r)
-
-    # band_counts = Counter(r["complexity_band"] for r in results)
-    # print("\nComplexity distribution:")
-    # for band, count in sorted(band_counts.items()):
-    #     print(f"  {band:<16}: {count:>5}  ({100 * count / len(results):.1f}%)")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(results).to_parquet(output_path)
@@ -1063,24 +1055,3 @@ if __name__ == "__main__":
 
 
 
-
-    # def fit(self, queries: list[str]) -> "TaskComplexityAnalyzer":
-    #     """Pre-compute thresholds from a reference corpus."""
-    #     for q in queries:
-    #         scores  = self._compute_scores(q.lower())
-    #         overall = sum(self.weights[d] * s for d, s in scores.items())
-    #         self._score_history.append(overall)
-    #     self._recompute_thresholds()
-    #     return self
-
-    # def fit(self, queries: list[str]) -> "TaskComplexityAnalyzer":
-    #     self._query_scores = {}   # query text → overall score
-        
-    #     for q in queries:
-    #         scores  = self._compute_scores(q.lower())
-    #         overall = sum(self.weights[d] * s for d, s in scores.items())
-    #         self._score_history.append(overall)
-    #         self._query_scores[q] = overall   # ← store it
-
-    #     self._recompute_thresholds()
-    #     return self
