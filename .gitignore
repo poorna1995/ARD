@@ -1,4 +1,11 @@
-# Environment
+# =============================================================================
+# research_work — .gitignore (branch: feature/data)
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. Python & environment
+# -----------------------------------------------------------------------------
 .env
 .venv/
 venv/
@@ -6,72 +13,108 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
-
-
-
-# Data (don't commit raw or processed data, but keep READMEs + scripts)
-datasets/raw/*
-datasets/golden/*
-datasets/processed/*
-datasets/cache/*
-!datasets/raw/README.md
-!datasets/processed/README.md
-!datasets/cache/README.md
-datasets/baselines/*
-notebooks/*
-notebooks/data/*
-test_tools_smoke.py
-test_tools.py
-
-
-
-
-.DS_Store
-test.py
-data/*
 pyproject.toml
-tests/*
-.vanallia.py
-tests/
-notebooks/graph_representation.ipynb
-notebooks/graph1.ipynb
-notebooks/graph2.ipynb
-notebooks/hidden_State.ipynb
-notebooks/model_agnostic.ipynb
-notebooks/test_Cot.ipynb
-test_router.py
-src/loaders/download_gia_attachments.py
-agents/
-baselines/
-complexity/
-notebooks/
-results_v1/
-results1/
-scripts/
-agent/muliatgent1.py
-results/
-results_v2/
-results/
-final_results/
-results1/
-# Outputs (commit selectively)
-logs/
-outputs/*.png
-outputs/*.csv
 uv.lock
-vanallia.py
-run.py
-dashboard.py
 
 
-# Jupyter checkpoints
-.ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
-
-
-
-
-# IDE
+# -----------------------------------------------------------------------------
+# 2. OS & IDE
+# -----------------------------------------------------------------------------
+.DS_Store
 .vscode/
 .idea/
 *.swp
+
+
+# -----------------------------------------------------------------------------
+# 3. Jupyter
+# -----------------------------------------------------------------------------
+notebooks/
+.ipynb_checkpoints/
+
+
+# -----------------------------------------------------------------------------
+# 4. Datasets  (see datasets/README.md)
+# -----------------------------------------------------------------------------
+#
+# Tracked (committed):
+#   datasets/README.md
+#   datasets/train_samples/*.parquet   (500×3 + combined_raw 1,500)
+#   datasets/eval_samples/*.parquet    (200×4 + gaia 165)
+#
+# Ignored (rebuild locally):
+#   datasets/raw/, processed/, cache/, golden/, complexity/, gaia_attachments/
+
+# Default: ignore everything under datasets/
+datasets/**
+
+# Exceptions — sample parquets + docs
+!datasets/README.md
+!datasets/train_samples/
+!datasets/train_samples/**
+!datasets/eval_samples/
+!datasets/eval_samples/**
+
+# Large / cache paths (explicit; also covered by datasets/**)
+datasets/raw/**
+datasets/processed/**
+datasets/cache/**
+datasets/golden/**
+datasets/complexity/**
+datasets/gaia_attachments/**
+
+
+# -----------------------------------------------------------------------------
+# 5. Scripts
+# -----------------------------------------------------------------------------
+#
+# Tracked: data pipeline only
+# Ignored:  run_agents_shared_config.py, test_*.py, etc.
+
+scripts/*
+
+!scripts/create_eval_samples.py
+!scripts/create_train_samples.py
+!scripts/download.py
+!scripts/inspect_training_data.py
+!scripts/normalize_math_data.py
+
+
+# -----------------------------------------------------------------------------
+# 6. Tests (local smoke / tooling)
+# -----------------------------------------------------------------------------
+tests/
+test.py
+test_router.py
+test_tools.py
+test_tools_smoke.py
+
+
+# -----------------------------------------------------------------------------
+# 7. Experiments, results & outputs
+# -----------------------------------------------------------------------------
+agents/
+baselines/
+complexity/
+data/*
+final_results/
+logs/
+outputs/*.csv
+outputs/*.png
+results/
+results_v1/
+results_v2/
+results1/
+
+
+# -----------------------------------------------------------------------------
+# 8. Application code — local WIP (not on feature/data)
+# -----------------------------------------------------------------------------
+agent/muliatgent1.py
+dashboard.py
+run.py
+vanallia.py
+.vanallia.py
+
+# Obsolete path (replaced by src/data/)
+src/loaders/download_gia_attachments.py

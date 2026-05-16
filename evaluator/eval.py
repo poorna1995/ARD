@@ -157,7 +157,19 @@ def canonicalise_answer(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
-def is_correct(pred: str, expected: str) -> bool:
+def is_correct(
+    pred: str,
+    expected: str,
+    dataset: str | None = None,
+) -> bool:
+    """
+    Compare prediction to gold. Uses MATH LaTeX normalization for math datasets;
+    otherwise canonical string match (QA / GAIA style).
+    """
+    if dataset in ("math", "math_hard"):
+        from src.math_latex import is_math_equiv
+
+        return is_math_equiv(pred, expected)
     return canonicalise_answer(pred) == canonicalise_answer(expected)
 
 

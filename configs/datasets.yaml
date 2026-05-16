@@ -1,108 +1,50 @@
 # configs/datasets.yaml
-# ─────────────────────────────────────────────────────────────
-# Master configuration for all benchmark datasets.
-# Each entry controls: how the loader downloads, which split
-# to use, how many samples to load, and what the canonical
-# column names are after normalization.
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# Master config for all benchmark datasets.
+# Keys are the dataset names used in the CLI (--dataset math).
+# ─────────────────────────────────────────────────────────────────────
 
-swe_bench:
-  display_name: "SWE-Bench Verified"
-  hf_repo: "princeton-nlp/SWE-bench_Verified"
-  split: "test"
-  max_samples: 500 # set null to load all
-  source: huggingface
-  canonical_columns:
-    id: "instance_id"
-    query: "problem_statement" # the GitHub issue text
-    answer: "patch" # gold patch (for reference)
+# ── 1. Hendrycks MATH ────────────────────────────────────────────────
+math:
+  display_name: "Hendrycks MATH"
+  hf_repo: "EleutherAI/hendrycks_math"
+  max_samples: null # null = load all (~12.5 k combined)
+  exclude_figures: true # drop problems with [asy] Asymptote blocks
+  levels: null # e.g. ["Level 5"] for hardest only
+  subjects: null # e.g. ["Algebra", "Number Theory"]
+  normalize_answers: true # MATH strip_string on \\boxed{} answers
+  # splits downloaded automatically: train + test
 
-    metadata:
-      - "difficulty"
-      - "repo"
-      - "base_commit"
-      - "version"
-  complexity_hints:
-    # number of files changed → natural difficulty proxy
+# ── 2. MuSiQue (multi-hop QA) ────────────────────────────────────────
+musique:
+  display_name: "MuSiQue"
+  hf_repo: "dgslibisey/MuSiQue"
+  max_samples: null
+  keep_unanswerable: false # drop questions without a gold answer
+  # splits downloaded automatically: train + validation
 
-    proxy_field: null # computed at load time
-  notes: >
-    Verified subset of SWE-Bench (500 instances). Each task is a
-    real GitHub issue. Multi-agent relevant: planner + coder + tester.
-
+# ── 3. GAIA ──────────────────────────────────────────────────────────
+# NOTE: requires HuggingFace login.
+#   Run:  huggingface-cli login
+#   Or:   export HF_TOKEN=hf_your_token_here
 gaia:
-  display_name: "GAIA (Level 1-3)"
+  display_name: "GAIA"
   hf_repo: "gaia-benchmark/GAIA"
-  split: "validation"
-  max_samples: Null # full validation set ~450
-  source: huggingface
-  hf_config: "2023_all" # config name in GAIA repo
-  canonical_columns:
-    id: "task_id"
-    query: "Question"
-    answer: "Final answer"
-    metadata:
-      - "Level" # 1 (easy) to 3 (hard) — built-in difficulty!
-      - "Annotator Metadata"
-  complexity_hints:
-    proxy_field: "Level" # directly usable as ground-truth difficulty
-    proxy_range: [1, 3]
-  notes: >
-    GAIA has annotated difficulty levels (1-3), making it uniquely
-    valuable as a ground-truth complexity signal to validate our estimators.
-    Requires tool use and multi-step reasoning.
+  hf_config: "2023_all"
+  split: "validation" # only validation has gold answers
+  max_samples: null # ~450 rows total
 
+# ── 4. MMLU-Pro ──────────────────────────────────────────────────────
 mmlu_pro:
   display_name: "MMLU-Pro"
   hf_repo: "TIGER-Lab/MMLU-Pro"
-  split: "test"
-  max_samples: Null # full test set ~12k; 2k is representative
-  source: huggingface
-  canonical_columns:
-    id: "question_id"
-    query: "question"
-    answer: "answer"
-    answer_index: "answer_index"
-    choices: "options"
-    metadata:
-      - "category"
-      - "cot_content"
-  complexity_hints:
-    proxy_field: null
-    stratify_by: "category" # sample across all 14 categories
-  notes: >
-    10-option MCQ across 14 domains. Harder than MMLU (fewer giveaway
-    distractors). Good for model-agnostic complexity estimation since
-    choice count is fixed. Covers both easy and hard domains.
+  max_samples: null # ~12k test + ~70 val; set int to cap per-category
+  # splits downloaded automatically: validation + test
 
-math_hard:
-  display_name: "MATH Hard (617 subset)"
-  hf_repo: "lighteval/MATH-Hard"
-  split: "test"
-  max_samples: null # ~617 after filtering; load all
-  source: huggingface
-  filter:
-    exclude_figures:
-      true # drop problems containing [asy] Asymptote blocks
-      # — this filter yields the canonical ~617 subset
-  canonical_columns:
-    id: null # assigned at load time as "math_XXXX"
-    query: "problem" # competition math problem (LaTeX)
-    answer: null # extracted at load time from \boxed{} in solution
-    metadata:
-      - "level" # always "Level 5" in this dataset
-      - "type" # subject: Algebra, Geometry, Number Theory, etc.
-      - "solution" # full step-by-step solution (LaTeX)
-  complexity_hints:
-    proxy_field: "solution_length" # computed at load time; char length of solution
-    notes: >
-      All problems are Level 5 (hardest tier). Solution length serves as
-      a secondary within-level complexity proxy.
-  notes: >
-    Harder subset of the Hendrycks MATH benchmark (Hendrycks et al., 2021).
-    Uses the lighteval/MATH-Hard test split (all Level 5 problems) filtered
-    to exclude problems with embedded Asymptote figures, yielding the
-    canonical ~617-problem evaluation set used widely in the literature.
-    Answers are extracted from the LaTeX \boxed{} tag in the solution field.
-    Covers 7 subjects: Algebra, Counting & Probability, Geometry,
-    Intermediate Algebra, Number Theory, Prealgebra, Precalculus.
+# ── 5. HotpotQA ──────────────────────────────────────────────────────
+hotpot:
+  display_name: "HotpotQA"
+  hf_repo: "hotpot_qa"
+  hf_config: "distractor" # or "fullwiki"
+  max_samples: null # train ~90k; set e.g. 10000 to cap
+  # splits downloaded automatically: train + validation
