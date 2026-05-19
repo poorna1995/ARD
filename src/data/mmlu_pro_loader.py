@@ -57,6 +57,45 @@ def _coerce_list(val) -> list | None:
     return None
 
 
+def normalize_options(options: object) -> list[str]:
+    """Return option texts as a flat list of non-empty strings."""
+    raw = _coerce_list(options)
+    if raw is None and isinstance(options, np.ndarray):
+        raw = options.tolist()
+    if not raw:
+        return []
+    if isinstance(raw, np.ndarray):
+        raw = raw.tolist()
+    out: list[str] = []
+    for item in raw:
+        if item is None or (isinstance(item, float) and pd.isna(item)):
+            continue
+        text = str(item).strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def format_options_block(options: object) -> str:
+    """Format choices as 'a. opt1, b. opt2, ...' for agent prompts."""
+    opts = normalize_options(options)
+    if not opts:
+        return ""
+    parts = [f"{chr(ord('a') + i)}. {text}" for i, text in enumerate(opts)]
+    return ", ".join(parts)
+
+
+def append_options_to_query(query: str, options: object) -> str:
+    """Append multiple-choice options to the question text."""
+    q = (query or "").strip()
+    block = format_options_block(options)
+    if not block:
+        return q
+    if block in q:
+        return q
+    return f"{q}\n\n{block}"
+
+
 class MMLUProLoader(BaseLoader):
     NAME = "mmlu_pro"
 
@@ -125,6 +164,15 @@ class MMLUProLoader(BaseLoader):
                   .reset_index(drop=True)
             )
             logger.info(f"[mmlu_pro] stratified cap → {len(df):,} rows")
+
+        if "options" in df.columns:
+            df["query"] = [
+                append_options_to_query(q, opts)
+                for q, opts in zip(df["query"], df["options"], strict=True)
+            ]
+            n = int(df["options"].apply(lambda o: bool(normalize_options(o))).sum())
+            if n:
+                logger.info(f"[mmlu_pro] appended option list to query for {n:,} rows")
 
         cols = ["id", "query", "answer", "answer_index", "options",
                 "category", "cot_length", "split"]

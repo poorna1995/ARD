@@ -8,31 +8,24 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import is_correct
-from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
-
-from agent.react import TOOLS
-
-# Subset passed to nested ReAct in tool workers (must match planner + metadata).
-_MULTIAGENT_PUBLIC_TOOLS: tuple[str, ...] = (
-    "read_file",
-    "web_search",
-    "wikipedia_search",
-    "web_fetch",
+from agent.dataset_profile import (
+    apply_multiagent_profile,
+    extract_hop_metadata,
+    is_open_wiki_qa,
+    observation_text_from_tools_results,
+    validate_planner_subtasks,
 )
+from evaluator.eval import is_correct
+from evaluator.parse import (
+    extract_last_json_dict,
+    optional_float,
+    parse_llm_output_detailed,
+)
+from prompts.prompts import MultiagentPrompts, build_multiagent_prompts
 
-AVAILABLE_TOOLS = [n for n in _MULTIAGENT_PUBLIC_TOOLS if n in TOOLS]
-
-
-def _multiagent_worker_tool_dict() -> dict[str, Callable[..., Any]]:
-    d: dict[str, Callable[..., Any]] = {
-        n: TOOLS[n] for n in _MULTIAGENT_PUBLIC_TOOLS if n in TOOLS
-    }
-    d["finish"] = TOOLS["finish"]
-    return d
-
-
-WORKER_REACT_TOOLS: dict[str, Callable[..., Any]] = _multiagent_worker_tool_dict()
+# Nested ReAct tool workers use ``tools_for_dataset`` / ``react_tool_names_for_dataset``
+# from ``agent.react`` (single source of truth with standalone ReAct).
+from agent.react import react_tool_names_for_dataset, tools_for_dataset
 
 # ── WorkingMemory ──────────────────────────────────────────────────────────────
 
@@ -104,16 +97,23 @@ class MultiAgentAgent(BaseAgent):
             model=model,
             dataset=dataset,
             kwargs=kwargs,
+            strategy="multiagent",
         )
         cfg = cfg_result.config
-        params = cfg.agent_params
+        n_hops, hop_name = extract_hop_metadata(kwargs)
+        params = apply_multiagent_profile(
+            cfg.dataset, cfg.agent_params, n_hops=n_hops,
+        )
 
         self.dataset      = cfg.dataset
+        self._n_hops      = n_hops
+        self._hop_name    = hop_name
         self.max_workers  = int(params.get("max_workers", 4))
         self.max_subtasks = int(params.get("max_subtasks", 5))
         self.enable_tools_when_needed = bool(
             params.get("enable_tools_when_needed", True)
         )
+        self._react_tools = tools_for_dataset(self.dataset)
 
         self.planner_model = str(params.get("planner_model", "gpt-4o-mini"))
         self.worker_model  = str(params.get("worker_model", "gpt-4o-mini"))
@@ -133,11 +133,20 @@ class MultiAgentAgent(BaseAgent):
         self.worker_result_forward_chars = int(params.get("worker_result_forward_chars", 200))
         self.worker_evidence_forward_chars = int(params.get("worker_evidence_forward_chars", 80))
 
+        planner_tools = react_tool_names_for_dataset(cfg.dataset)
+        tool_enum = "|".join(["none"] + planner_tools)
+        tools_csv = ", ".join(planner_tools)
+        self._prompts: MultiagentPrompts = build_multiagent_prompts(
+            cfg.dataset,
+            tools_csv=tools_csv,
+            tool_enum=tool_enum,
+        )
+
         effective_max_tokens = cfg.max_tokens if "max_tokens" in kwargs else 2048
         super().__init__(
             model=cfg.model,
-            system_prompt=SYSTEM_PROMPT[self.dataset]["multiagent"],
-            user_prompt=USER_PROMPT[self.dataset]["multiagent"],
+            system_prompt="",
+            user_prompt="{query}",
             temperature=cfg.temperature,
             max_tokens=effective_max_tokens,
             seed=cfg.seed,
@@ -160,23 +169,39 @@ class MultiAgentAgent(BaseAgent):
 
     @staticmethod
     def _extract_json_object(text: Any) -> dict[str, Any] | None:
-        text = MultiAgentAgent._coerce_text(text).strip()
-        if not text:
-            return None
-        try:
-            obj = json.loads(text)
-            if isinstance(obj, dict):
-                return obj
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if not match:
-            return None
-        try:
-            obj = json.loads(match.group(0))
-            return obj if isinstance(obj, dict) else None
-        except json.JSONDecodeError:
-            return None
+        return extract_last_json_dict(MultiAgentAgent._coerce_text(text))
+
+    def _build_strategy_hint(self, subtask: dict[str, Any]) -> str:
+        """Short ReAct nudge from planner tool_name and optional search_query."""
+        tool_name     = str(subtask.get("tool_name", "none")).strip().lower()
+        candidate_url = str(subtask.get("candidate_url", "") or "").strip()
+        search_query  = str(subtask.get("search_query", "") or "").strip()
+
+        if tool_name == "math_tool":
+            return (
+                "\nStrategy: math_tool[<python_expression>] for every numeric step; "
+                "pure Python only — no units or words."
+            )
+        if tool_name in ("wikipedia_search", "wikipedia"):
+            if search_query:
+                return (
+                    f"\nStrategy: first Action must be "
+                    f"wikipedia_search[{search_query}] — entity/event name only."
+                )
+            return "\nStrategy: wikipedia_search[entity_name] — entity name only."
+        if tool_name == "read_file":
+            return "\nStrategy: read_file[exact_filename] when a file is named in the question."
+        if tool_name == "web_fetch" and candidate_url:
+            return f"\nStrategy: web_fetch[{candidate_url}] first; fall back to web_search."
+        if tool_name == "web_fetch":
+            return "\nStrategy: build an authoritative URL and web_fetch it."
+        if tool_name == "web_search":
+            if search_query:
+                return f"\nStrategy: first Action should be web_search[{search_query}]."
+            return "\nStrategy: web_search."
+        if tool_name and tool_name != "none":
+            return f"\nStrategy: call {tool_name} for this subtask."
+        return ""
 
     @staticmethod
     def _as_bool(value: Any, default: bool = False) -> bool:
@@ -274,15 +299,9 @@ class MultiAgentAgent(BaseAgent):
         if len(focused.split()) < 200:          # [OPT-EXT1] was 120
             return focused
 
-        # [OPT-EXT2] Shorter, tighter system prompt — shaves ~30 prompt tokens per call
-        system = (
-            "Fact extractor. Return ONLY sentences/numbers/names that DIRECTLY answer "
-            "the question. Preserve exact values. If nothing is relevant: NO_RELEVANT_CONTENT\n"
-            "Max 150 words. No preamble."
-        )
         try:
             out, _, _ = self._call_with_messages(
-                system, f"Q: {goal}\n\nDoc:\n{focused}",
+                self._prompts.extractor_system, f"Q: {goal}\n\nDoc:\n{focused}",
                 temperature=0.0, max_tokens=self.extractor_max_tokens,
                 model=self.worker_model,
             )
@@ -302,10 +321,8 @@ class MultiAgentAgent(BaseAgent):
 
     def _structured_extract(self, raw_text: str, fields: list[str], goal: str) -> str:
         fields_str = ", ".join(f'"{f}"' for f in fields)
-        # [OPT-EXT2] Shorter prompt
-        system = (
-            f"Extract fields [{fields_str}] as compact JSON. "
-            "null for missing. Exact values. No markdown."
+        system = self._prompts.structured_extractor_template.format(
+            fields_str=fields_str,
         )
         focused = self._retrieve_top_chunks(raw_text, goal)
         try:
@@ -339,6 +356,52 @@ class MultiAgentAgent(BaseAgent):
         if not fields:
             fields = ["value", "name", "description", "date", "location"]
         return list(dict.fromkeys(fields))
+
+    def _react_worker_payload(
+        self,
+        response: Any,
+        subtask: dict[str, Any],
+    ) -> tuple[str, str, float]:
+        """
+        (compressed result, raw storage text, confidence).
+        Uses last tool observation when ReAct exhausts steps without finish.
+        """
+        source_url = str(subtask.get("candidate_url", "") or "").strip()
+        tools_results = getattr(response, "tools_results", None)
+        pred = self._coerce_text(getattr(response, "predicted_answer", "")).strip()
+
+        if is_open_wiki_qa(self.dataset):
+            obs_text = observation_text_from_tools_results(tools_results)
+            if obs_text:
+                compressed = self._process_tool_result(
+                    raw=obs_text, subtask=subtask, source_url=source_url,
+                )
+                raw = obs_text[: self.worker_result_forward_chars * 2]
+                return compressed or obs_text[:300], raw, 0.6
+            if pred:
+                return (
+                    self._process_tool_result(raw=pred, subtask=subtask, source_url=source_url),
+                    pred,
+                    0.55,
+                )
+            return "", "", 0.2
+
+        if pred:
+            return (
+                self._process_tool_result(raw=pred, subtask=subtask, source_url=source_url),
+                pred,
+                0.75,
+            )
+
+        obs_text = observation_text_from_tools_results(tools_results)
+        if obs_text:
+            compressed = self._process_tool_result(
+                raw=obs_text, subtask=subtask, source_url=source_url,
+            )
+            raw = obs_text[: self.worker_result_forward_chars * 2]
+            return compressed or obs_text[:300], raw, 0.55
+
+        return "", "", 0.2
 
     # ── Smart tool-result processor ────────────────────────────────────────────
 
@@ -472,41 +535,94 @@ class MultiAgentAgent(BaseAgent):
                 return True
         return False
 
+    # ── Subtask ordering / planner fields ────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_subtask_depends_on(
+        depends_on: Any,
+        *,
+        valid_ids: frozenset[str],
+        self_id: str,
+    ) -> list[str]:
+        if not isinstance(depends_on, list):
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for dep in depends_on:
+            dep_id = str(dep).strip()
+            if not dep_id or dep_id == self_id or dep_id in seen:
+                continue
+            if dep_id not in valid_ids:
+                continue
+            seen.add(dep_id)
+            out.append(dep_id)
+        return out
+
+    @staticmethod
+    def _topo_sort_subtasks(subtasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Run parents before children; preserve planner order among independent tasks."""
+        if not subtasks:
+            return subtasks
+
+        by_id: dict[str, dict[str, Any]] = {}
+        for i, st in enumerate(subtasks, start=1):
+            sid = str(st.get("id", f"s{i}")).strip() or f"s{i}"
+            if sid in by_id:
+                sid = f"{sid}_{i}"
+            row = dict(st)
+            row["id"] = sid
+            by_id[sid] = row
+
+        valid = frozenset(by_id.keys())
+        for sid, st in by_id.items():
+            st["depends_on"] = MultiAgentAgent._normalize_subtask_depends_on(
+                st.get("depends_on"),
+                valid_ids=valid,
+                self_id=sid,
+            )
+
+        orig_index = {sid: i for i, sid in enumerate(by_id)}
+        indegree = {sid: 0 for sid in by_id}
+        children: dict[str, list[str]] = {sid: [] for sid in by_id}
+        for sid, st in by_id.items():
+            for dep in st["depends_on"]:
+                indegree[sid] += 1
+                children[dep].append(sid)
+
+        ready = sorted(
+            [sid for sid in by_id if indegree[sid] == 0],
+            key=lambda s: orig_index[s],
+        )
+        ordered: list[str] = []
+        while ready:
+            nid = ready.pop(0)
+            ordered.append(nid)
+            for child in sorted(children[nid], key=lambda s: orig_index[s]):
+                indegree[child] -= 1
+                if indegree[child] == 0:
+                    ready.append(child)
+                    ready.sort(key=lambda s: orig_index[s])
+
+        if len(ordered) < len(by_id):
+            for sid in sorted(by_id, key=lambda s: orig_index[s]):
+                if sid not in ordered:
+                    ordered.append(sid)
+
+        return [by_id[sid] for sid in ordered]
+
     # ── Planner ────────────────────────────────────────────────────────────────
 
     def _planner(
-        self, query: str
+        self, query: str, **kwargs: Any,
     ) -> tuple[list[dict[str, Any]], WorkingMemory, float, dict[str, int], float]:
         """
         [OPT-PLN1] Tighter system prompt (saves ~80 tokens).
         [OPT-PLN2] Enforce max 3 subtasks unless query clearly requires more —
         fewer subtasks = fewer worker calls = fewer tokens.
         """
-        tool_enum = "|".join(["none"] + AVAILABLE_TOOLS)
-        tools_csv = ", ".join(AVAILABLE_TOOLS)
-        # [OPT-PLN1] Condensed planner system prompt
-        system_prompt = (
-            "You are a Planner in a multi-agent QA system.\n"
-            "Decompose the query into 2–3 subtasks (4 only if truly necessary).\n"
-            "Strategy options: direct_url | web_search | read_file | none\n"
-            f"Available tools: {tools_csv}\n"
-            f'Each subtask "tool_name" must be exactly one token from: {tool_enum}.\n'
-            "Return ONLY strict JSON, no markdown:\n"
-            '{"final_constraint":"","subtasks":[{'
-            '"id":"s1","goal":"...","focus":"reasoning|factual|calculation",'
-            '"needs_tool":false,'
-            '"tool_name":"none",'
-            '"preferred_strategy":"direct_url|web_search|read_file|none",'
-            '"candidate_url":"","depends_on":[]}]}\n'
-            "Set needs_tool=true only when external data is truly required.\n"
-            # [OPT-PLN2] Explicit instruction: avoid redundant subtasks
-            "IMPORTANT: Do NOT create a subtask if a prior subtask will already "
-            "retrieve the needed data. Prefer depends_on over duplicate fetches."
- 
-        )
-
         raw, latency, response = self._call_with_messages(
-            system_prompt, f"Question: {query}",
+            self._prompts.planner_system,
+            self._format_question(query, **kwargs),
             temperature=0.1, max_tokens=self.planner_max_tokens,
             model=self.planner_model,
         )
@@ -521,37 +637,69 @@ class MultiAgentAgent(BaseAgent):
             raw_subs = []
 
         normalized: list[dict[str, Any]] = []
+        used_ids: set[str] = set()
         for i, st in enumerate(raw_subs[: self.max_subtasks], start=1):
             if isinstance(st, dict):
                 goal               = str(st.get("goal", "")).strip()
                 focus              = str(st.get("focus", "reasoning")).strip() or "reasoning"
-                needs_tool         = self._as_bool(st.get("needs_tool"), default=False)
-                tool_name          = str(st.get("tool_name", "none")).strip() or "none"
-                preferred_strategy = str(st.get("preferred_strategy", "web_search")).strip()
-                candidate_url      = str(st.get("candidate_url", "")).strip()
-                depends_on         = st.get("depends_on", [])
+                needs_tool    = self._as_bool(st.get("needs_tool"), default=False)
+                tool_name     = str(st.get("tool_name", "none")).strip() or "none"
+                candidate_url = str(st.get("candidate_url", "")).strip()
+                search_query  = str(st.get("search_query", "")).strip()
+                depends_on    = st.get("depends_on", [])
                 if not isinstance(depends_on, list):
                     depends_on = []
+                sub_id = str(st.get("id", f"s{i}")).strip() or f"s{i}"
             else:
                 goal = str(st).strip()
                 focus = "reasoning"; needs_tool = False; tool_name = "none"
-                preferred_strategy = "web_search"; candidate_url = ""; depends_on = []
+                candidate_url = ""; search_query = ""; depends_on = []
+                sub_id = f"s{i}"
+
+            if sub_id in used_ids:
+                sub_id = f"{sub_id}_{i}"
+            used_ids.add(sub_id)
 
             if goal:
                 normalized.append({
-                    "id": f"s{i}", "goal": goal, "focus": focus,
+                    "id": sub_id, "goal": goal, "focus": focus,
                     "needs_tool": needs_tool, "tool_name": tool_name,
-                    "preferred_strategy": preferred_strategy,
-                    "candidate_url": candidate_url, "depends_on": depends_on,
+                    "candidate_url": candidate_url,
+                    "search_query": search_query,
+                    "depends_on": [str(d).strip() for d in depends_on if str(d).strip()],
                 })
 
         if not normalized:
-            normalized = [{
-                "id": "s1", "goal": query, "focus": "reasoning",
-                "needs_tool": True, "tool_name": "web_search",
-                "preferred_strategy": "web_search",
-                "candidate_url": "", "depends_on": [],
-            }]
+            if self.dataset == "math":
+                normalized = [{
+                    "id": "s1", "goal": query, "focus": "calculation",
+                    "needs_tool": True, "tool_name": "math_tool",
+                    "candidate_url": "", "search_query": "", "depends_on": [],
+                }]
+            elif self.dataset in ("hotpot", "musique"):
+                normalized = [{
+                    "id": "s1", "goal": query, "focus": "factual",
+                    "needs_tool": True, "tool_name": "wikipedia_search",
+                    "candidate_url": "", "search_query": "", "depends_on": [],
+                }]
+            else:
+                normalized = [{
+                    "id": "s1", "goal": query, "focus": "reasoning",
+                    "needs_tool": True, "tool_name": "web_search",
+                    "candidate_url": "", "search_query": "", "depends_on": [],
+                }]
+
+        normalized = self._topo_sort_subtasks(normalized)
+
+        run_hops, run_name = extract_hop_metadata(kwargs)
+        n_hops = run_hops if run_hops is not None else self._n_hops
+        hop_name = run_name if run_name is not None else self._hop_name
+        normalized = validate_planner_subtasks(
+            normalized,
+            dataset=self.dataset,
+            n_hops=n_hops,
+            hop_name=hop_name,
+        )
 
         mem = WorkingMemory(
             goal             = query,
@@ -577,15 +725,6 @@ class MultiAgentAgent(BaseAgent):
 
         prior_context = self._build_prior_context(subtask, mem)
 
-        # [OPT-WRK1] Condensed system prompt
-        system_prompt = (
-            "Specialist Worker in a multi-agent QA system.\n"
-            "Solve ONLY your assigned subtask. Draft → challenge → finalise.\n"
-            "Return strict JSON only:\n"
-            '{"subtask_id":"...","result":"...","confidence":<0-1>,'
-            '"evidence":"≤15 words","self_critique":"one sentence"}'
-        )
-        # [OPT-WRK2] Compact dep-slice only
         user_prompt = (
             f"Memory: {mem.slice_for(subtask.get('depends_on', []))}\n"
             f"Subtask: {subtask['id']} | {subtask['goal']} | focus={subtask['focus']}"
@@ -593,7 +732,7 @@ class MultiAgentAgent(BaseAgent):
         )
 
         raw, latency, response = self._call_with_messages(
-            system_prompt, user_prompt,
+            self._prompts.worker_system, user_prompt,
             temperature=0.2, max_tokens=self.worker_max_tokens,
             model=self.worker_model,
         )
@@ -660,15 +799,25 @@ class MultiAgentAgent(BaseAgent):
             return self._tool_worker_error(subtask, str(exc))
 
         prior_context = self._build_prior_context(subtask, mem)
-        preferred     = subtask.get("preferred_strategy", "web_search")
-        candidate_url = str(subtask.get("candidate_url", "") or "").strip()
-
-        if preferred == "direct_url" and candidate_url:
-            strategy_hint = f"\nStrategy: fetch {candidate_url} first; fall back to web_search."
-        elif preferred == "direct_url":
-            strategy_hint = "\nStrategy: build an authoritative URL and fetch it."
+        strategy_hint = self._build_strategy_hint(subtask)
+        tool_name     = str(subtask.get("tool_name", "none")).strip().lower()
+        if tool_name == "math_tool":
+            stop_hint = (
+                "If math_tool returns a usable result, verify it before finish."
+            )
         else:
-            strategy_hint = "\nStrategy: web_search."
+            stop_hint = (
+                "If the first fetch/search succeeds, return immediately. "
+                "Do NOT repeat searches with minor query variations."
+            )
+
+        search_query = str(subtask.get("search_query", "") or "").strip()
+        search_nudge = ""
+        if search_query:
+            search_nudge = (
+                f"\nPlanner search_query (use for the first retrieval step): "
+                f"{search_query}"
+            )
 
         # [OPT-TOOL2] Compact memory slice + [OPT-TOOL1] step budget hint
         worker_query = (
@@ -676,26 +825,18 @@ class MultiAgentAgent(BaseAgent):
             f"Goal: {subtask['goal']}\n"
             f"Tool: {subtask.get('tool_name', 'none')}"
             f"{strategy_hint}"
+            f"{search_nudge}"
             f"{prior_context}"
-            # [OPT-TOOL1] Hard nudge to stop early
-            f"\nIMPORTANT: Use at most {self.tool_max_steps} tool calls. "
-            "If the first fetch/search succeeds, return immediately. "
-            "Do NOT repeat searches with minor query variations."
+            f"\nIMPORTANT: Use at most {self.tool_max_steps} tool calls. {stop_hint}"
         )
 
-        wt = WORKER_REACT_TOOLS
+        wt = self._react_tools
         run_variants: list[dict[str, Any]] = [
             {
                 "query": worker_query,
                 "model": self.model,
                 "dataset": self.dataset,
                 "max_steps": self.tool_max_steps,
-                "tools": wt,
-            },
-            {
-                "query": worker_query,
-                "model": self.model,
-                "dataset": self.dataset,
                 "tools": wt,
             },
             {
@@ -725,9 +866,8 @@ class MultiAgentAgent(BaseAgent):
             print(f"[TOOL_WORKER][{subtask['id']}] ReAct failed ({exc}); llm-only fallback.")
             return self._tool_worker_llm_fallback(query, subtask, mem, exc)
 
-        response_answer_text = self._coerce_text(response.answer)
-        compressed = self._process_tool_result(
-            raw=response_answer_text, subtask=subtask, source_url=candidate_url,
+        compressed, response_answer_text, worker_conf = self._react_worker_payload(
+            response, subtask,
         )
 
         result: dict[str, Any] = {
@@ -738,7 +878,7 @@ class MultiAgentAgent(BaseAgent):
             "tool_name":          str(subtask.get("tool_name", "none")),
             "result":             compressed,
             "result_raw":         response_answer_text,
-            "confidence":         0.75,
+            "confidence":         worker_conf,
             "evidence":           "ReAct tool worker; result semantically extracted.",
             "react_tools_called": response.tools_called,
         }
@@ -797,13 +937,10 @@ class MultiAgentAgent(BaseAgent):
     # ── Judge / Synthesizer ────────────────────────────────────────────────────
 
     def _judge_answer_fallback(self, query: str, malformed: str) -> str:
-        system = (
-            "Answer extractor. Return ONLY the final answer — no explanation. "
-            "If no answer: unknown"
-        )
         try:
             out, _, _ = self._call_with_messages(
-                system, f"Q: {query}\n\nText:\n{malformed[:400]}",  # [OPT-JDG1] 600→400
+                self._prompts.judge_fallback_system,
+                f"Q: {query}\n\nText:\n{malformed[:400]}",  # [OPT-JDG1] 600→400
                 temperature=0.0, max_tokens=64,
                 model=self.worker_model,
             )
@@ -817,6 +954,7 @@ class MultiAgentAgent(BaseAgent):
         query:    str,
         subtasks: list[dict[str, Any]],
         mem:      WorkingMemory,
+        **kwargs: Any,
     ) -> tuple[dict[str, Any], float, dict[str, int], float]:
         """
         [OPT-JDG1] Tighter system prompt (~50 tokens saved).
@@ -835,20 +973,7 @@ class MultiAgentAgent(BaseAgent):
             if len(unique_facts) > 1 else ""
         )
 
-        # [OPT-JDG1] Condensed judge system prompt
-        system_prompt = (
-            "Judge in a multi-agent QA system.\n"
-            "Review working memory, cross-validate facts, produce ONE concise answer.\n"
-            "If a high-confidence worker produced a direct factual answer,"
-            "prefer it unless conflicting evidence exists."
-            "Do NOT reinterpret symbolic answers."
-            "Return ONLY strict JSON:\n"
-            '{"answer":"<bare value>","consensus_score":<0-1>,'
-            '"rationale":"1-2 sentences","conflict_resolution":"none or explanation"}\n'
-            "Numbers: digits only. Names: name only. Boolean: yes/no. Unknown: unknown. "
-            "No preamble in answer field."
-            f"{conflict_note}"
-        )
+        system_prompt = self._prompts.judge_system + conflict_note
         # [OPT-JDG2] Pass only filtered memory
         filtered_mem_str = json.dumps(
             {"goal": mem.goal, "known_facts": high_conf_facts,
@@ -856,7 +981,7 @@ class MultiAgentAgent(BaseAgent):
             ensure_ascii=False, separators=(",", ":"),
         )
         user_prompt = (
-            f"Question: {query}\n\n"
+            f"{self._format_question(query, **kwargs)}\n\n"
             f"Working memory:\n{filtered_mem_str}"
         )
 
@@ -871,53 +996,50 @@ class MultiAgentAgent(BaseAgent):
         )
 
         extraction_method   = "none"
-        answer              = ""
         consensus_score     = 0.0
         rationale           = ""
         conflict_resolution = ""
+        judge_confidence: float | None = None
+        judge_complexity: float | None = None
 
-        parsed = self._extract_json_object(raw)
-        if parsed:
-            candidate = str(parsed.get("answer", "")).strip()
-            if candidate and candidate.lower() not in {"", "none", "null"}:
-                answer            = candidate
-                extraction_method = "json_parse"
-                try:
-                    consensus_score = float(parsed.get("consensus_score", 0.0))
-                except (TypeError, ValueError):
-                    consensus_score = 0.0
-                rationale           = str(parsed.get("rationale", "")).strip()
-                conflict_resolution = str(parsed.get("conflict_resolution", "")).strip()
+        parsed_out = parse_llm_output_detailed(raw)
+        meta = extract_last_json_dict(raw) or {}
 
-        if not answer:
-            m = re.search(r'"answer"\s*:\s*"([^"]{1,300})"', raw, re.S)
-            if m:
-                answer            = m.group(1).strip()
-                extraction_method = "regex"
-            sm = re.search(r'"consensus_score"\s*:\s*([0-9]*\.?[0-9]+)', raw)
-            if sm:
-                try:
-                    consensus_score = float(sm.group(1))
-                except ValueError:
-                    pass
-            rm = re.search(r'"rationale"\s*:\s*"([^"]{1,300})"', raw, re.S)
-            if rm:
-                rationale = rm.group(1).strip()
+        predicted_answer = ""
+        if parsed_out.structured:
+            predicted_answer = parsed_out.predicted_answer
+            extraction_method = "parse_llm_output"
+            judge_confidence = parsed_out.confidence
+            judge_complexity = parsed_out.complexity
 
-        if not answer:
-            answer            = self._judge_answer_fallback(query, raw)
-            extraction_method = "llm_fallback" if answer else "failed"
+        if meta:
+            try:
+                consensus_score = float(meta.get("consensus_score", 0.0))
+            except (TypeError, ValueError):
+                consensus_score = 0.0
+            rationale = str(meta.get("rationale", "")).strip()
+            conflict_resolution = str(meta.get("conflict_resolution", "")).strip()
+            if judge_confidence is None:
+                judge_confidence = optional_float(meta.get("confidence"))
+            if judge_complexity is None:
+                judge_complexity = optional_float(meta.get("complexity"))
 
-        if not answer:
-            answer            = "unknown"
+        if not predicted_answer:
+            predicted_answer = self._judge_answer_fallback(query, raw)
+            extraction_method = "llm_fallback" if predicted_answer else "failed"
+
+        if not predicted_answer:
+            predicted_answer = "unknown"
             extraction_method = "failed"
 
-        answer = self._strip_answer_preamble(answer)
+        predicted_answer = self._strip_answer_preamble(predicted_answer)
 
         return (
             {
-                "answer":              answer,
+                "predicted_answer":    predicted_answer,
                 "consensus_score":     round(consensus_score, 4),
+                "confidence":          judge_confidence,
+                "complexity":          judge_complexity,
                 "rationale":           rationale,
                 "conflict_resolution": conflict_resolution,
                 "raw_judge_output":    raw,
@@ -943,7 +1065,7 @@ class MultiAgentAgent(BaseAgent):
 
         try:
             # ── 1. Planner ────────────────────────────────────────────────────
-            subtasks, mem, lat, usage, cost = self._planner(query)
+            subtasks, mem, lat, usage, cost = self._planner(query, **kwargs)
             sub_agents_run.append("planner")
             total_latency_llm += lat
             prompt_tokens     += usage["prompt_tokens"]
@@ -956,9 +1078,11 @@ class MultiAgentAgent(BaseAgent):
             print(f"[DIAG] Subtasks: {len(subtasks)} | "
                   f"Tool-needed: {sum(1 for s in subtasks if s.get('needs_tool'))}")
             for s in subtasks:
+                sq = s.get("search_query", "") or ""
                 print(f"       [{s['id']}] needs_tool={s['needs_tool']} "
-                      f"strategy={s.get('preferred_strategy','?')} "
+                      f"tool={s.get('tool_name','none')} "
                       f"depends_on={s.get('depends_on',[])} "
+                      f"search_query={sq!r} "
                       f"url={s.get('candidate_url','') or '—'} "
                       f"| {s['goal'][:80]}")
 
@@ -1042,7 +1166,7 @@ class MultiAgentAgent(BaseAgent):
                 self._update_memory(mem, subtask, out)
 
             # ── 3. Judge ──────────────────────────────────────────────────────
-            judged, j_lat, j_usage, j_cost = self._judge(query, subtasks, mem)
+            judged, j_lat, j_usage, j_cost = self._judge(query, subtasks, mem, **kwargs)
             sub_agents_run.append("judge")
             sub_agent_responses.append({"role": "judge", "output": judged})
             total_latency_llm += j_lat
@@ -1052,11 +1176,11 @@ class MultiAgentAgent(BaseAgent):
             total_cost        += j_cost
             total_llm_calls   += 1
 
-            answer = judged["answer"]
+            predicted_answer = judged["predicted_answer"]
 
             response_obj = AgentResponse(
                 query   = query,
-                answer  = answer,
+                predicted_answer=predicted_answer,
                 model   = self.model,
                 agent   = "multiagent",
                 dataset = self.dataset,
@@ -1070,7 +1194,7 @@ class MultiAgentAgent(BaseAgent):
                 reasoning_steps   = [s["goal"] for s in subtasks],
                 num_llm_calls     = total_llm_calls,
                 num_steps         = len(subtasks),
-                tools_available   = list(AVAILABLE_TOOLS),
+                tools_available   = react_tool_names_for_dataset(self.dataset),
                 tools_called      = tools_called,
                 tools_results     = tools_results,
                 num_tool_calls    = num_tool_calls,
@@ -1082,9 +1206,12 @@ class MultiAgentAgent(BaseAgent):
                 selected_agent       = "judge",
                 sub_agent_responses  = sub_agent_responses,
                 consensus_score      = judged.get("consensus_score"),
+                confidence           = judged.get("confidence"),
+                complexity           = judged.get("complexity"),
                 expected_answer = expected,
                 is_correct      = (
-                    is_correct(answer, str(expected)) if expected else None
+                    is_correct(predicted_answer, str(expected), dataset=self.dataset)
+                    if expected else None
                 ),
                 error     = None,
                 is_failed = False,
@@ -1094,7 +1221,7 @@ class MultiAgentAgent(BaseAgent):
         except Exception as exc:
             response_obj = AgentResponse(
                 query   = query,
-                answer  = '{"answer": "ERROR"}',
+                predicted_answer='{"answer": "ERROR"}',
                 model   = self.model,
                 agent   = "multiagent",
                 dataset = self.dataset,
@@ -1106,7 +1233,7 @@ class MultiAgentAgent(BaseAgent):
                 total_tokens      = total_tokens,
                 cost_usd          = total_cost,
                 num_llm_calls     = total_llm_calls,
-                tools_available   = list(AVAILABLE_TOOLS),
+                tools_available   = react_tool_names_for_dataset(self.dataset),
                 tools_called      = tools_called,
                 tools_results     = tools_results,
                 num_tool_calls    = num_tool_calls,

@@ -1,18 +1,21 @@
+from __future__ import annotations
+
+import time
+
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import is_correct, parse_agent_output
-from prompts.prompts import USER_PROMPT, SYSTEM_PROMPT
+from evaluator.parse import parse_llm_output
+from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
+
+AGENT_ID = "raw_001"
 
 
 class RawAgent(BaseAgent):
-    """Single-shot baseline agent with canonical config/runtime contracts."""
+    """Single-shot baseline: one LLM call, parsed answer."""
 
     def __init__(self, model: str, dataset: str, **kwargs):
-        cfg_result = self._normalize_config(
-            model=model,
-            dataset=dataset,
-            kwargs=kwargs,
-        )
-        cfg = cfg_result.config
+        cfg = self._normalize_config(
+            model=model, dataset=dataset, kwargs=kwargs, strategy="raw",
+        ).config
         self.dataset = cfg.dataset
         super().__init__(
             model=cfg.model,
@@ -24,52 +27,63 @@ class RawAgent(BaseAgent):
         )
 
     def run(self, query: str, **kwargs) -> AgentResponse:
-        """Runtime inputs are shared via **kwargs (e.g., expected_answer)."""
-        raw_out, latency, response = self._call_llm(query)
-        answer, confidence, complexity = parse_agent_output(raw_out)
-        expected = kwargs.get("expected_answer")
-        response_obj = AgentResponse(
-            query             = query,
-            answer            = answer,
-            model             = self.model,
-            agent             = "raw",
-            dataset           = self.dataset,
-            latency_total     = latency,
-            latency_llm       = latency,
-            expected_answer   = expected,
-            cost_usd          = self._compute_cost(
-                                    response.usage.prompt_tokens,
-                                    response.usage.completion_tokens
-                                ),
-            prompt_tokens     = response.usage.prompt_tokens,
-            completion_tokens = response.usage.completion_tokens,
-            total_tokens      = response.usage.total_tokens,
-            is_correct        = (
-                is_correct(answer, str(expected))
-                if expected else None
-            ),
-            confidence        = confidence,
-            complexity        = complexity,
+        t0 = time.perf_counter()
+        expected = self._expected_answer(kwargs)
 
-        )
-        return self._finalize_response(response_obj)
+        try:
+            raw_text, latency_llm, api = self._call_llm(query, **kwargs)
+            predicted_answer, confidence, complexity = parse_llm_output(raw_text)
+            usage = api.usage
+            return self._core_response(
+                query=query,
+                agent="raw",
+                agent_id=AGENT_ID,
+                predicted_answer=predicted_answer,
+                latency_total=time.perf_counter() - t0,
+                latency_llm=latency_llm,
+                expected_answer=expected,
+                is_failed=False,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                confidence=confidence,
+                complexity=complexity,
+                num_steps=1,
+                steps_taken=1,
+            )
+        except Exception as exc:
+            return self._core_response(
+                query=query,
+                agent="raw",
+                agent_id=AGENT_ID,
+                predicted_answer="",
+                latency_total=time.perf_counter() - t0,
+                latency_llm=0.0,
+                expected_answer=expected,
+                is_failed=True,
+                error=str(exc),
+                finalize=False,
+            )
 
 
 def run(query: str, model: str, dataset: str, **kwargs) -> AgentResponse:
-    agent = RawAgent(model=model, dataset=dataset, **kwargs)
-    return agent.run(query=query, **kwargs)
+    return RawAgent(model=model, dataset=dataset, **kwargs).run(
+        query=query, **kwargs,
+    )
+
 
 if __name__ == "__main__":
     import pandas as pd
 
     dataset = "gaia"
     model = "gpt-4o-mini"
-    df = pd.read_parquet(f"datasets/golden/{dataset}.parquet", columns=["query", "answer"])
-    agent = RawAgent(model=model, dataset=dataset)
+    path = f"datasets/golden/{dataset}.parquet"
+    df = pd.read_parquet(path, columns=["query", "answer"])
 
     for _, row in df.iterrows():
-        response = agent.run(
+        resp = run(
             query=str(row["query"]),
+            model=model,
+            dataset=dataset,
             expected_answer=row.get("answer"),
         )
-        print(response)
+        print(resp.agent_id, resp.predicted_answer, resp.latency_total, resp.is_failed)

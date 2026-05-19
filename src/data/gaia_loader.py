@@ -82,6 +82,18 @@ def _expand_metadata(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def append_attachment_to_query(query: str, file_name: str | None) -> str:
+    """Append attachment basename to the question for tool-using agents (read_file)."""
+    q = (query or "").strip()
+    fn = "" if file_name is None or (isinstance(file_name, float) and pd.isna(file_name)) else str(file_name).strip()
+    if not fn:
+        return q
+    marker = f"Attached file: {fn}"
+    if marker.lower() in q.lower():
+        return q
+    return f"{q}\n\n{marker}"
+
+
 class GAIALoader(BaseLoader):
     NAME = "gaia"
 
@@ -120,6 +132,15 @@ class GAIALoader(BaseLoader):
         df = df[df["query"].notna() & (df["query"].str.strip() != "")].reset_index(drop=True)
         if before > len(df):
             logger.info(f"[gaia] dropped {before - len(df)} empty-query rows")
+
+        if "file_name" in df.columns:
+            df["query"] = [
+                append_attachment_to_query(q, fn)
+                for q, fn in zip(df["query"], df["file_name"], strict=True)
+            ]
+            n = int((df["file_name"].fillna("").astype(str).str.strip() != "").sum())
+            if n:
+                logger.info(f"[gaia] appended 'Attached file: <name>' to query for {n:,} rows")
 
         df = self._cap(df)
 

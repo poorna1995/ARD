@@ -84,7 +84,7 @@ def _append_math_training_id(out: pd.DataFrame) -> pd.DataFrame:
 
 def _append_hotpot_training_meta(out: pd.DataFrame) -> pd.DataFrame:
     out = out.copy()
-    out["dataset_source"] = "hotpotqa"
+    out["dataset_source"] = "hotpot"
     out["training_id"] = [f"hotpot_{i}" for i in range(len(out))]
     return out
 
@@ -125,7 +125,7 @@ def sample_hotpot(
     """
     Stratified sample across ``level`` × ``type`` (bridge / comparison).
 
-    Optional: ``dataset_source`` = ``hotpotqa``, ``training_id`` = ``hotpot_0`` …
+    Optional: ``dataset_source`` = ``hotpot``, ``training_id`` = ``hotpot_0`` …
     """
     work = df[df["level"].isin(HOTPOT_LEVELS) & df["type"].isin(HOTPOT_TYPES)].copy()
     out = stratified_sample(work, ["level", "type"], n, seed=seed)
@@ -210,7 +210,7 @@ def combine_training_samples(
     parts: list[pd.DataFrame] = []
     for raw, fallback_src in (
         (math_df.copy(), "math"),
-        (hotpot_df.copy(), "hotpotqa"),
+        (hotpot_df.copy(), "hotpot"),
         (musique_df.copy(), "musique"),
     ):
         df = raw

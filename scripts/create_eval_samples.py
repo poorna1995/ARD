@@ -21,6 +21,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.data.gaia_loader import append_attachment_to_query  # noqa: E402
+from src.data.mmlu_pro_loader import append_options_to_query  # noqa: E402
 from src.utils.train_samples import (  # noqa: E402
     EVAL_N,
     sample_gaia,
@@ -69,12 +71,24 @@ def main() -> None:
     print(f"  → {OUT_DIR / 'musique.parquet'}")
 
     mmlu_df = pd.read_parquet(PROC / "mmlu_pro" / "test" / "data.parquet")
+    if "options" in mmlu_df.columns:
+        mmlu_df = mmlu_df.copy()
+        mmlu_df["query"] = [
+            append_options_to_query(q, opts)
+            for q, opts in zip(mmlu_df["query"], mmlu_df["options"], strict=True)
+        ]
     mmlu_s = sample_mmlu(mmlu_df, args.n, args.seed)
     mmlu_s.to_parquet(OUT_DIR / "mmlu.parquet", index=False)
     _print_dist("mmlu (test)", mmlu_s, ["category"])
     print(f"  → {OUT_DIR / 'mmlu.parquet'}")
 
     gaia_df = pd.read_parquet(PROC / "gaia.parquet")
+    if "file_name" in gaia_df.columns:
+        gaia_df = gaia_df.copy()
+        gaia_df["query"] = [
+            append_attachment_to_query(q, fn)
+            for q, fn in zip(gaia_df["query"], gaia_df["file_name"], strict=True)
+        ]
     gaia_s = sample_gaia(gaia_df, n=None, seed=args.seed)
     gaia_s.to_parquet(OUT_DIR / "gaia.parquet", index=False)
     if "level" in gaia_s.columns:

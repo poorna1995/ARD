@@ -14,7 +14,7 @@ from agent.config import normalize_agent_config
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # ✅ Simplest - direct string key access
 MODELS = {
-    "raw":        {"primary": "llama-3.3-70b-versatile, "secondary": "gpt-4o"},
+    "raw":        {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
     "cot":        {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
     "react":      {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
     "multiagent": {"primary": "llama-3.3-70b-versatile", "secondary": "gpt-4o"},
@@ -25,7 +25,7 @@ AGENT_MODULES = {
     "react": "agent.react",
     "multiagent": "agent.multiagent",
 }
-DATASETS = ["gaia", "mmlu_pro", "math_hard", "swe_bench_verified"]
+DATASETS = ["gaia", "mmlu_pro", "math", "swe_bench_verified"]
 AGENTS = ['raw', 'cot', 'react', 'multiagent']
 
 class Router:
@@ -114,6 +114,7 @@ class Router:
             model=self._get_model(),
             dataset=self.dataset,
             kwargs=self.other_parameters,
+            strategy=self.agent,
         )
         cfg = normalized.config
         agent_kwargs = {**cfg.agent_params}

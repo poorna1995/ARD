@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import canonicalise_answer, is_correct, parse_agent_output
+from evaluator.eval import canonicalise_answer, is_correct, parse_llm_output
+from evaluator.parse import extract_reasoning_steps
 from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
 
 # Logic / math symbols in the *question* → use literal vote keys (canonical strips `a`/`an`
@@ -72,11 +73,15 @@ def _literal_ci_vote_key(text: str) -> str:
     return re.sub(r"\s+", " ", t)
 
 
-def _vote_key_for_path(answer: str, strategy: str) -> str:
+def _vote_key_for_path(
+    answer: str,
+    strategy: str,
+    dataset: str | None = None,
+) -> str:
     s = (strategy or "canonical").strip().lower()
     if s == "literal_ci":
         return _literal_ci_vote_key(answer)
-    return canonicalise_answer(str(answer or ""))
+    return canonicalise_answer(str(answer or ""), dataset=dataset)
 
 
 def _is_placeholder_parsed_answer(ans: str) -> bool:
@@ -89,20 +94,6 @@ def _is_placeholder_parsed_answer(ans: str) -> bool:
     if len(t) >= 2 and t.startswith("<") and t.endswith(">"):
         return True
     return False
-
-
-def _extract_reasoning(raw_answer: str) -> tuple[list[str], str]:
-    """Split CoT lines from trailing JSON (same idea as ``agent.cot.CotAgent``)."""
-    steps: list[str] = []
-    lines = raw_answer.strip().split("\n")
-    for line in lines:
-        if line.strip().startswith("{") and "answer" in line:
-            break
-        if line.strip():
-            steps.append(line.strip())
-    match = re.search(r'\{"answer":\s*"([^"]+)"\}', raw_answer)
-    final = match.group(0) if match else raw_answer
-    return steps, final
 
 
 def _majority_from_paths(
@@ -194,6 +185,9 @@ def _sc_log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+# Self-consistency: per-path LLM calls use only ``query`` in the user message (no extra kwargs).
+
+
 class SelfConsistencyAgent(BaseAgent):
 
     def __init__(self, model: str, dataset: str, **kwargs: Any) -> None:
@@ -243,7 +237,7 @@ class SelfConsistencyAgent(BaseAgent):
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.user_prompt.format(query=query)},
+                {"role": "user", "content": self._format_user_prompt(query)},
             ],
             "temperature": temperature,
             "max_tokens": self.max_tokens,
@@ -283,8 +277,8 @@ class SelfConsistencyAgent(BaseAgent):
                 temperature=self.sample_temperature,
                 path_index=path_index,
             )
-            steps, final_blob = _extract_reasoning(raw)
-            answer, conf, comp = parse_agent_output(final_blob)
+            steps = extract_reasoning_steps(raw)
+            answer, conf, comp = parse_llm_output(raw)
             msg = response.choices[0].message
             reasoning_steps = getattr(msg, "reasoning_steps", None) or steps
             usage = self._get_usage(response)
@@ -296,6 +290,7 @@ class SelfConsistencyAgent(BaseAgent):
                     "vote_key": _vote_key_for_path(
                         answer,
                         getattr(self, "_vote_strategy_effective", "canonical"),
+                        dataset=self.dataset,
                     ),
                     "confidence": conf,
                     "complexity": comp,
@@ -444,7 +439,7 @@ class SelfConsistencyAgent(BaseAgent):
 
         response_obj = AgentResponse(
             query=query,
-            answer=winner,
+            predicted_answer=winner,
             model=self.model,
             agent="self_consistency",
             dataset=self.dataset,
@@ -472,7 +467,8 @@ class SelfConsistencyAgent(BaseAgent):
             consensus_score=consensus,
             expected_answer=expected,
             is_correct=(
-                is_correct(winner, str(expected)) if expected else None
+                is_correct(winner, str(expected), dataset=self.dataset)
+                if expected else None
             ),
             confidence=avg_conf,
             complexity=None,

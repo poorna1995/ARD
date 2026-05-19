@@ -31,7 +31,7 @@ datasets/
 | `mmlu_pro` | `TIGER-Lab/MMLU-Pro`               | `test`, `validation`  | **no**            | yes (200)           |
 | `gaia`     | `gaia-benchmark/GAIA` (`2023_all`) | validation only       | **no**            | yes (165, full val) |
 
-**Agent / prompt registry names** (e.g. in `prompts/prompts.py`): `math_hard`, `mmlu_pro`, `gaia`, `swe_bench_verified` — map to loader keys above where applicable (`math_hard` → MATH loader).
+**Agent / prompt registry names** (e.g. in `prompts/prompts.py`): `math`, `mmlu_pro`, `gaia`, `hotpot`, `musique` — same keys as loader names above.
 
 ---
 
@@ -102,7 +102,7 @@ Stratified subsample: **500 rows per dataset**, `seed=42`, then stacked.
 **`hotpot.parquet` (500 × 8)**  
 `id`, `query`, `answer`, `type`, `level`, `split`, `dataset_source`, `training_id`
 
-- `dataset_source`: `hotpotqa`
+- `dataset_source`: `hotpot`
 - `training_id`: `hotpot_0` … `hotpot_499`
 - Stratify: `level` × `type` (bridge / comparison)
 
@@ -121,7 +121,7 @@ Union of all columns from the three sources:
 | `id`, `query`, `answer`                        | filled                               | filled      | filled       |
 | `level`, `type`, `solution`, `solution_length` | filled                               | NaN         | NaN          |
 | `n_hops`, `hop_type`, `hop_name`, `answerable` | NaN                                  | NaN         | filled       |
-| `dataset_source`                               | `math`                               | `hotpotqa`  | `musique`    |
+| `dataset_source`                               | `math`                               | `hotpot`    | `musique`    |
 | `dataset_training_id`                          | `math_*`                             | `hotpot_*`  | `musique_*`  |
 | `training_id`                                  | `train_0000` … `train_1499` (global) | same        | same         |
 
@@ -160,7 +160,7 @@ math_eval = pd.read_parquet("datasets/eval_samples/math.parquet")
 math_train = pd.read_parquet("datasets/processed/math/train/data.parquet")
 ```
 
-**Agent runs:** pass `expected_answer=row["answer"]` and set `dataset` to the prompt key (e.g. `math_hard` for MATH). For MATH, scoring uses LaTeX normalization via `evaluator.eval.is_correct(..., dataset="math_hard")`.
+**Agent runs:** pass `expected_answer=row["answer"]` and set `dataset` to the prompt key (e.g. `math` for MATH). Grading uses ``evaluator.eval.is_correct`` / ``evaluator.dataset_normalize.grade``: **math** is Hendrycks ``is_equiv`` (plus base-suffix ints and light notation cleanup); **hotpot** / **musique** use **SQuAD token F1** (threshold 0.5, stricter 0.62 when normalized gold contains `` and ``); **gaia** uses leaderboard quasi-EM.
 
 ---
 
@@ -172,6 +172,17 @@ math_train = pd.read_parquet("datasets/processed/math/train/data.parquet")
 | `scripts/create_train_samples.py`      | `train_samples/{math,hotpot,musique,combined}.parquet`  |
 | `scripts/create_eval_samples.py`       | `eval_samples/*.parquet`                                |
 | `scripts/normalize_math_data.py`       | Re-apply MATH answer normalization on existing parquets |
+| `scripts/regrade_train_labels.py`      | Re-grade `oracle_results.csv`, rebuild `train_labels.csv`, export `discarded_*` review CSVs (no API) |
+
+**Discarded exports** (written by `regrade_train_labels.py` when not passed `--no-discarded-exports`):
+
+| File | Contents |
+|------|----------|
+| `train_samples/discarded_oracle_review.csv` | All discarded questions × agents (`query` if present) |
+| `train_samples/discarded_math_oracle_review.csv` | Math slice only |
+| `train_samples/discarded_hotpot_oracle_review.csv` | Hotpot slice only |
+| `train_samples/discarded_musique_oracle_review.csv` | MuSiQue slice only |
+| `train_samples/discarded_questions_summary.csv` | One row per discarded question: `training_id`, `dataset`, `query`, `expected_answer` |
 
 <!-- --- -->
 

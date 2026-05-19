@@ -62,7 +62,7 @@ def main() -> None:
     hot_s = sample_hotpot(hot_df, args.n, args.seed, add_training_metadata=True)
     hot_path = OUT_DIR / "hotpot.parquet"
     hot_s.to_parquet(hot_path, index=False)
-    assert hot_s["dataset_source"].eq("hotpotqa").all()
+    assert hot_s["dataset_source"].eq("hotpot").all()
     assert hot_s["training_id"].iloc[0] == "hotpot_0"
     print(f"  → {hot_path}")
 

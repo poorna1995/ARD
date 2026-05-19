@@ -7,7 +7,7 @@ LOADER_REGISTRY = {
     "swe_bench": SWEBenchLoader,
     "gaia": GAIALoader,
     "mmlu_pro": MMLUProLoader,
-    "math_hard": MathLoader,
+    "math": MathLoader,
 }
 
 

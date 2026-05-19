@@ -1,36 +1,136 @@
-import sys
-import io
-import traceback
+from __future__ import annotations
 
-@tool("python_exec", "function to execute Python code. Input: raw Python source string.")
+import json
+import os
+import subprocess
+import tempfile
+
+from agent.tools.decorator import tool
+
+# Maximum wall-clock seconds a script may run.
+_TIMEOUT_SEC = int(os.environ.get("PYTHON_EXEC_TIMEOUT_SEC", "30"))
+
+# Maximum characters returned from stdout / stderr.
+_MAX_OUTPUT = 3000
+
+# Patterns that are always blocked regardless of context.
+# These prevent the most dangerous operations in a research environment.
+_BLOCKED_PATTERNS: list[str] = [
+    "os.system(",
+    "os.popen(",
+    "os.remove(",
+    "os.unlink(",
+    "os.rmdir(",
+    "shutil.rmtree(",
+    "shutil.move(",
+    "subprocess.run(",
+    "subprocess.Popen(",
+    "subprocess.call(",
+    "__import__('os')",
+    '__import__("os")',
+    "sys.exit(",
+    "open('/etc",
+    'open("/etc',
+    "open('/proc",
+    'open("/proc',
+]
+
+
+def _check_blocked(code: str) -> str | None:
+    """Return the first blocked pattern found, or None if code is safe."""
+    for pattern in _BLOCKED_PATTERNS:
+        if pattern in code:
+            return pattern
+    return None
+
+
+@tool(
+    "python_exec",
+    (
+        "Execute a Python code snippet and return its printed output. "
+        "Use for: data processing, arithmetic, sorting, filtering, "
+        "working with files already loaded into variables, string manipulation. "
+        "Available imports: pandas, numpy, math, statistics, json, csv, re, "
+        "datetime, collections, itertools, functools, pathlib. "
+        "Always use print() to show results — only stdout is captured. "
+        "Timeout: 30 seconds. "
+        "Do NOT use for: web requests, file deletion, system commands. "
+        "Example: python_exec[import pandas as pd\\ndf=pd.read_csv('/path/file.csv')\\nprint(df.describe())]"
+    ),
+)
 def python_exec(code: str) -> str:
-    """
-    Executes Python in a restricted namespace.
-    Returns stdout + stderr, or a traceback on failure.
-    """
-    namespace = {
-        "pd": __import__("pandas"),
-        "np": __import__("numpy"),
-        "json": __import__("json"),
-        "math": __import__("math"),
-        # Explicitly block dangerous builtins
-        "__builtins__": {
-            k: __builtins__[k]
-            for k in ("print", "len", "range", "enumerate",
-                      "zip", "map", "filter", "sorted",
-                      "min", "max", "sum", "abs", "round",
-                      "isinstance", "type", "str", "int",
-                      "float", "list", "dict", "set", "tuple")
-        },
-    }
-    stdout_capture = io.StringIO()
-    try:
-        sys.stdout = stdout_capture
-        exec(compile(code, "<agent>", "exec"), namespace)
-    except Exception:
-        return f"Error:\n{traceback.format_exc()}"
-    finally:
-        sys.stdout = sys.__stdout__
+    code = (code or "").strip()
+    if not code:
+        return json.dumps({"ok": False, "error": "No code provided."})
 
-    output = stdout_capture.getvalue().strip()
-    return output or "(code ran successfully, no output)"
+    blocked = _check_blocked(code)
+    if blocked:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": (
+                    f"Blocked operation detected: '{blocked}'. "
+                    "File system modifications and shell commands are not permitted."
+                ),
+            }
+        )
+
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".py",
+            delete=False,
+            encoding="utf-8",
+        ) as f:
+            f.write(code)
+            tmp_path = f.name
+
+        result = subprocess.run(
+            ["python3", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SEC,
+            env={
+                **os.environ,
+                "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                # Prevent the subprocess from spawning interactive sessions
+                "TERM": "dumb",
+            },
+        )
+
+        if result.returncode == 0:
+            output = result.stdout[:_MAX_OUTPUT]
+            return json.dumps(
+                {
+                    "ok": True,
+                    "output": output,
+                    "stderr": result.stderr[:500] if result.stderr.strip() else None,
+                },
+                ensure_ascii=False,
+            )
+        else:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": result.stderr[:_MAX_OUTPUT] or "Script exited with non-zero status.",
+                    "stdout": result.stdout[:500] if result.stdout.strip() else None,
+                }
+            )
+
+    except subprocess.TimeoutExpired:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": f"Script timed out after {_TIMEOUT_SEC} seconds. "
+                "Simplify the computation or break it into smaller steps.",
+            }
+        )
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

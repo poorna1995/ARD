@@ -37,9 +37,33 @@ SELF_CONSISTENCY_CONFIG_KEYS: set[str] = {
     "vote_key_strategy",
 }
 
-AGENT_PARAM_KEYS: set[str] = MULTIAGENT_CONFIG_KEYS | SELF_CONSISTENCY_CONFIG_KEYS
+REACT_CONFIG_KEYS: set[str] = {
+    "max_steps",
+}
+
+AGENT_PARAM_KEYS: set[str] = (
+    MULTIAGENT_CONFIG_KEYS | SELF_CONSISTENCY_CONFIG_KEYS | REACT_CONFIG_KEYS
+)
 
 CANONICAL_CONFIG_KEYS: set[str] = COMMON_CONFIG_KEYS | AGENT_PARAM_KEYS
+
+# Per-strategy allowlist — kwargs for other strategies are ignored (not unknown).
+STRATEGY_PARAM_KEYS: dict[str, frozenset[str]] = {
+    "raw": frozenset(),
+    "cot": frozenset(),
+    "debate": frozenset(),
+    "react": frozenset(REACT_CONFIG_KEYS),
+    "self_consistency": frozenset(SELF_CONSISTENCY_CONFIG_KEYS),
+    "multiagent": frozenset(MULTIAGENT_CONFIG_KEYS),
+}
+
+# Passed through run() but not part of model/agent configuration.
+RUNTIME_KWARGS: frozenset[str] = frozenset({
+    "expected_answer",
+    "phase",
+    "n_hops",
+    "hop_name",
+})
 
 
 CONFIG_ALIASES: dict[str, str] = {
@@ -68,6 +92,7 @@ class NormalizedConfigResult:
     config: AgentConfig
     used_aliases: dict[str, str] = field(default_factory=dict)
     unknown_keys: list[str] = field(default_factory=list)
+    ignored_keys: list[str] = field(default_factory=list)
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -93,7 +118,7 @@ def _coerce_common_values(values: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _coerce_multiagent_values(values: dict[str, Any]) -> dict[str, Any]:
+def _coerce_agent_param_values(values: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(values)
     int_keys = {
         "max_workers",
@@ -103,8 +128,10 @@ def _coerce_multiagent_values(values: dict[str, Any]) -> dict[str, Any]:
         "tool_max_steps",
         "worker_result_forward_chars",
         "worker_evidence_forward_chars",
+        "num_paths",
+        "max_steps",
     }
-    float_keys = {"worker_retry_threshold"}
+    float_keys = {"worker_retry_threshold", "sample_temperature"}
     bool_keys = {"enable_tools_when_needed", "log_sc_paths"}
 
     for key in int_keys:
@@ -116,10 +143,6 @@ def _coerce_multiagent_values(values: dict[str, Any]) -> dict[str, Any]:
     for key in bool_keys:
         if key in normalized and normalized[key] is not None:
             normalized[key] = _coerce_bool(normalized[key])
-    if "num_paths" in normalized and normalized["num_paths"] is not None:
-        normalized["num_paths"] = int(normalized["num_paths"])
-    if "sample_temperature" in normalized and normalized["sample_temperature"] is not None:
-        normalized["sample_temperature"] = float(normalized["sample_temperature"])
     if "vote_key_strategy" in normalized and normalized["vote_key_strategy"] is not None:
         normalized["vote_key_strategy"] = str(normalized["vote_key_strategy"]).strip().lower()
     return normalized
@@ -130,14 +153,18 @@ def normalize_agent_config(
     model: str,
     dataset: str,
     kwargs: Mapping[str, Any] | None = None,
+    strategy: str | None = None,
 ) -> NormalizedConfigResult:
     """
     Normalize raw kwargs into a canonical agent configuration.
 
+    When ``strategy`` is set (e.g. ``"cot"``, ``"react"``), only that agent's
+    param keys are placed in ``agent_params``; other agent-specific keys are
+    listed in ``ignored_keys`` rather than polluting config or ``unknown_keys``.
+
     Notes:
     - This function is backward-compatible with legacy key names via CONFIG_ALIASES.
-    - Non-config runtime keys (e.g., expected_answer) remain unknown by design and
-      should be handled separately by caller code.
+    - Runtime keys (e.g. ``expected_answer``) are excluded from ``unknown_keys``.
     """
     raw = dict(kwargs or {})
     alias_hits: dict[str, str] = {}
@@ -150,7 +177,7 @@ def normalize_agent_config(
         normalized_items[canonical] = value
 
     normalized_items = _coerce_common_values(normalized_items)
-    normalized_items = _coerce_multiagent_values(normalized_items)
+    normalized_items = _coerce_agent_param_values(normalized_items)
 
     cfg = AgentConfig(
         model=str(normalized_items.get("model", model)),
@@ -161,14 +188,38 @@ def normalize_agent_config(
         agent_params={},
     )
 
+    allowed: frozenset[str] | None = None
+    if strategy is not None:
+        allowed = STRATEGY_PARAM_KEYS.get(strategy)
+        if allowed is None:
+            raise ValueError(
+                f"Unknown strategy {strategy!r}; "
+                f"expected one of {sorted(STRATEGY_PARAM_KEYS)}"
+            )
+
+    ignored_keys: list[str] = []
     for key, value in normalized_items.items():
-        if key not in COMMON_CONFIG_KEYS and key in AGENT_PARAM_KEYS:
+        if key in COMMON_CONFIG_KEYS or key in RUNTIME_KWARGS:
+            continue
+        if key not in AGENT_PARAM_KEYS:
+            continue
+        if allowed is not None:
+            if key in allowed:
+                cfg.agent_params[key] = value
+            else:
+                ignored_keys.append(key)
+        else:
             cfg.agent_params[key] = value
 
-    unknown_keys = sorted(k for k in normalized_items.keys() if k not in CANONICAL_CONFIG_KEYS)
+    unknown_keys = sorted(
+        k
+        for k in normalized_items.keys()
+        if k not in CANONICAL_CONFIG_KEYS and k not in RUNTIME_KWARGS
+    )
 
     return NormalizedConfigResult(
         config=cfg,
         used_aliases=alias_hits,
         unknown_keys=unknown_keys,
+        ignored_keys=sorted(ignored_keys),
     )

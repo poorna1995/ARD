@@ -1,8 +1,8 @@
 from __future__ import annotations
-import re
 
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import is_correct, parse_agent_output
+from evaluator.eval import is_correct, parse_llm_output
+from evaluator.parse import extract_reasoning_steps
 from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
 
 
@@ -26,23 +26,11 @@ class CotAgent(BaseAgent):
             seed=cfg.seed,
         )
 
-    def _extract_reasoning(self, raw_answer: str) -> tuple[list[str], str]:
-        steps = []
-        lines = raw_answer.strip().split("\n")
-        for line in lines:
-            if line.strip().startswith("{") and "answer" in line:
-                break
-            if line.strip():
-                steps.append(line.strip())
-        match = re.search(r'\{"answer":\s*"([^"]+)"\}', raw_answer)
-        final = match.group(0) if match else raw_answer
-        return steps, final
-
     def run(self, query: str, **kwargs) -> AgentResponse:
         """Runtime inputs are shared via **kwargs (e.g., expected_answer)."""
-        raw_answer, latency, response = self._call_llm(query)
-        steps, final = self._extract_reasoning(raw_answer)
-        answer, confidence, complexity = parse_agent_output(final)
+        raw_answer, latency, response = self._call_llm(query, **kwargs)
+        steps = extract_reasoning_steps(raw_answer)
+        predicted_answer, confidence, complexity = parse_llm_output(raw_answer)
 
         # Use parsed steps from reasoning; fall back to API attribute if present.
         msg = response.choices[0].message
@@ -52,7 +40,7 @@ class CotAgent(BaseAgent):
 
         response_obj = AgentResponse(
             query             = query,
-            answer            = answer,
+            predicted_answer  = predicted_answer,
             model             = self.model,
             agent             = "cot",
             dataset           = self.dataset,
@@ -77,7 +65,7 @@ class CotAgent(BaseAgent):
             is_stopped_early  = False,
             expected_answer   = expected,
             is_correct        = (
-                is_correct(answer, str(expected))
+                is_correct(predicted_answer, str(expected), dataset=self.dataset)
                 if expected else None
             ),
             confidence        = confidence,
