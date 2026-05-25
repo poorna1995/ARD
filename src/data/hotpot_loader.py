@@ -74,9 +74,16 @@ class HotpotLoader(BaseLoader):
             df["id"] = [f"hotpot_{i:05d}" for i in range(len(df))]
         df["id"] = df["id"].astype(str)
 
+        if "context" in df.columns:
+            from agent.episode_context import normalize_episode_context
+
+            df["context"] = df["context"].apply(
+                lambda c: normalize_episode_context(c, dataset="hotpot")
+            )
+
         df = self._cap(df)
 
-        cols = ["id", "query", "answer", "type", "level", "split"]
+        cols = ["id", "query", "answer", "type", "level", "split", "context"]
         return df[[c for c in cols if c in df.columns]].reset_index(drop=True)
 
     # ── Verify ────────────────────────────────────────────────────────────

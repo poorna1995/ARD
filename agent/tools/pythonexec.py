@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+import sys
 import tempfile
 
 from agent.tools.decorator import tool
@@ -44,6 +46,37 @@ def _check_blocked(code: str) -> str | None:
     return None
 
 
+def _normalize_code(code: str) -> str:
+    """
+    Repair common ReAct / OCR artifacts before executing.
+
+    - Literal ``\\n`` / ``\\t`` from bracket-escaped tool inputs → real newlines
+    - Over-escaped quotes from bracket parsing
+    - read_file OCR: ``+ ".join(`` → ``+ "".join(`` (missing empty string)
+    - Truncated one-shot ``arr = [...`` literals missing a closing ``]``
+    """
+    if "\\n" in code or "\\r" in code:
+        code = code.replace("\\r\\n", "\n").replace("\\n", "\n")
+    if "\\t" in code:
+        code = code.replace("\\t", "\t")
+    if "\\'" in code:
+        code = code.replace("\\'", "'")
+    if '\\"' in code:
+        code = code.replace('\\"', '"')
+
+    # OCR typo when copying URL-builder scripts from image read_file output.
+    code = re.sub(r'(\+)\s*"\.join\(', r'\1"".join(', code)
+
+    opens = code.count("[")
+    closes = code.count("]")
+    if opens == closes + 1:
+        stripped = code.rstrip()
+        if stripped and stripped[-1] not in "])}":
+            code = stripped + "]"
+
+    return code
+
+
 @tool(
     "python_exec",
     (
@@ -59,7 +92,7 @@ def _check_blocked(code: str) -> str | None:
     ),
 )
 def python_exec(code: str) -> str:
-    code = (code or "").strip()
+    code = _normalize_code((code or "").strip())
     if not code:
         return json.dumps({"ok": False, "error": "No code provided."})
 
@@ -87,7 +120,7 @@ def python_exec(code: str) -> str:
             tmp_path = f.name
 
         result = subprocess.run(
-            ["python3", tmp_path],
+            [sys.executable, tmp_path],
             capture_output=True,
             text=True,
             timeout=_TIMEOUT_SEC,
@@ -101,14 +134,17 @@ def python_exec(code: str) -> str:
 
         if result.returncode == 0:
             output = result.stdout[:_MAX_OUTPUT]
-            return json.dumps(
-                {
-                    "ok": True,
-                    "output": output,
-                    "stderr": result.stderr[:500] if result.stderr.strip() else None,
-                },
-                ensure_ascii=False,
-            )
+            payload: dict[str, object] = {
+                "ok": True,
+                "output": output,
+                "stderr": result.stderr[:500] if result.stderr.strip() else None,
+            }
+            if not (output or "").strip():
+                payload["warning"] = (
+                    "EMPTY_OUTPUT: script ran but printed nothing. "
+                    "Use print() to expose results."
+                )
+            return json.dumps(payload, ensure_ascii=False)
         else:
             return json.dumps(
                 {

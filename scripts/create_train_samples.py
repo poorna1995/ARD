@@ -10,7 +10,8 @@ Additive for training files only: ``training_id`` (MATH);
 
 Outputs:
   datasets/train_samples/{math,hotpot,musique}.parquet
-  datasets/train_samples/combined.parquet  (1,500 rows; global training_id)
+  datasets/train_samples/combined.parquet
+  datasets/train_samples/combined_raw.parquet  (same stack; alias for metadata joins)
 """
 
 from __future__ import annotations
@@ -59,6 +60,11 @@ def main() -> None:
     print(f"  → {math_path}")
 
     hot_df = pd.read_parquet(proc / "hotpot" / "train" / "data.parquet")
+    if "context" not in hot_df.columns:
+        print(
+            "WARNING: processed hotpot has no 'context' column — "
+            "re-run HotpotLoader (see datasets/README.md) before retrieve will work."
+        )
     hot_s = sample_hotpot(hot_df, args.n, args.seed, add_training_metadata=True)
     hot_path = OUT_DIR / "hotpot.parquet"
     hot_s.to_parquet(hot_path, index=False)
@@ -67,6 +73,11 @@ def main() -> None:
     print(f"  → {hot_path}")
 
     mus_df = pd.read_parquet(proc / "musique" / "train" / "data.parquet")
+    if "context" not in mus_df.columns:
+        print(
+            "WARNING: processed musique has no 'context' column — "
+            "re-run MuSiQueLoader so 'paragraphs' → 'context' is populated."
+        )
     mus_s = sample_musique(mus_df, args.n, args.seed, add_training_metadata=True)
     mus_path = OUT_DIR / "musique.parquet"
     mus_s.to_parquet(mus_path, index=False)
@@ -78,10 +89,15 @@ def main() -> None:
     print(f"  → {mus_path}")
 
     combined = combine_training_samples(math_s, hot_s, mus_s, expected_total=3 * args.n)
-    combined_path = OUT_DIR / "combined.parquet"
-    combined.to_parquet(combined_path, index=False)
+    for name in ("combined.parquet", "combined_raw.parquet"):
+        path = OUT_DIR / name
+        combined.to_parquet(path, index=False)
     assert combined["training_id"].nunique() == len(combined)
-    print(f"\ncombined: {len(combined)} rows, unique training_id → {combined_path}")
+    print(
+        f"\ncombined: {len(combined)} rows, {len(combined.columns)} cols, "
+        f"unique training_id → {OUT_DIR / 'combined.parquet'} "
+        f"(+ combined_raw.parquet)"
+    )
 
     print("\nAll train samples saved.")
 

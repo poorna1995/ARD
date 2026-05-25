@@ -10,9 +10,6 @@ from datetime import timedelta
 from typing import TypeVar
 
 from agent.tools.decorator import tool
-
-# How many characters of full article text to return.
-# Summary alone (1500) is too short for multi-hop MuSiQue/HotpotQA questions.
 _MAX_CONTENT_CHARS = int(os.environ.get("WIKIPEDIA_MAX_CHARS", "3000"))
 _WIKI_RETRY_ATTEMPTS = int(os.environ.get("WIKIPEDIA_RETRY_ATTEMPTS", "5"))
 _WIKI_RETRY_BACKOFF_S = float(os.environ.get("WIKIPEDIA_RETRY_BACKOFF_S", "1.0"))
@@ -26,7 +23,6 @@ _WIKI_API_RETRY_WAIT_S = float(os.environ.get("WIKIPEDIA_API_RETRY_WAIT", "2.0")
 _WIKI_FALLBACK_MIN_WAIT_MS = int(os.environ.get("WIKIPEDIA_FALLBACK_MIN_WAIT_MS", "250"))
 
 logger = logging.getLogger(__name__)
-
 _T = TypeVar("_T")
 
 # Process-wide throttle + shared clients (benchmark may use thread pools).

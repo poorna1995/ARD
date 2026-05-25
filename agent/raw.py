@@ -4,7 +4,7 @@ import time
 
 from agent.base import BaseAgent, AgentResponse
 from evaluator.parse import parse_llm_output
-from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
+from prompts.prompts import build_raw_system, user_prompt
 
 AGENT_ID = "raw_001"
 
@@ -19,8 +19,8 @@ class RawAgent(BaseAgent):
         self.dataset = cfg.dataset
         super().__init__(
             model=cfg.model,
-            system_prompt=SYSTEM_PROMPT[self.dataset]["raw"],
-            user_prompt=USER_PROMPT[self.dataset]["raw"],
+            system_prompt=build_raw_system(self.dataset),
+            user_prompt=user_prompt(self.dataset),
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             seed=cfg.seed,

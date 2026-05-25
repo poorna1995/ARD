@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
 from pathlib import Path
 import pandas as pd
 import pdfplumber
@@ -95,6 +96,119 @@ def _resolve_existing_path(filename: str) -> Path | None:
     return None
 
 
+def _file_observation(path: str, body: str, *, max_chars: int = 8000) -> str:
+    """Prefix resolved filesystem path so python_exec can open the same file."""
+    prefix = f"Resolved path (for python_exec): {path}\n\n"
+    room = max(0, max_chars - len(prefix))
+    return prefix + body[:room]
+
+
+def _excel_engine_for_ext(ext: str) -> str:
+    return "xlrd" if ext == ".xls" else "openpyxl"
+
+
+def _format_excel_workbook(sheets: dict) -> str:
+    parts = []
+    for sheet_name, df in sheets.items():
+        df = (
+            df.dropna(axis=0, how="all")
+            .dropna(axis=1, how="all")
+            .reset_index(drop=True)
+        )
+        df = df.apply(lambda col: col.str.strip().str.replace(r"\s+", " ", regex=True))
+
+        section = [f"## Sheet: {sheet_name}\n"]
+
+        if df.empty:
+            section.append("_No data_")
+        else:
+            first_col = df.columns[0]
+            other_cols = df.columns[1:]
+
+            blocks = []
+            current_category = None
+            current_rows = []
+
+            for _, row in df.iterrows():
+                is_category_row = (
+                    row[first_col].strip() != ""
+                    and all(row[c].strip() == "" for c in other_cols)
+                )
+                if is_category_row:
+                    if current_rows:
+                        blocks.append((current_category, pd.DataFrame(current_rows)))
+                    current_category = row[first_col].strip()
+                    current_rows = []
+                else:
+                    current_rows.append(row)
+
+            if current_rows:
+                blocks.append((current_category, pd.DataFrame(current_rows)))
+
+            if blocks:
+                for category, block_df in blocks:
+                    block_df = block_df.reset_index(drop=True)
+                    if category:
+                        section.append(f"### Category: {category}\n")
+                    section.append(block_df.to_markdown(index=False))
+                    section.append("")
+            else:
+                section.append(df.to_markdown(index=False))
+
+        parts.append("\n".join(section))
+
+    return "\n\n---\n\n".join(parts)
+
+
+def _read_excel_source(source: str | BytesIO, *, label: str) -> str:
+    ext = os.path.splitext(label)[1].lower()
+    sheets = pd.read_excel(
+        source,
+        sheet_name=None,
+        engine=_excel_engine_for_ext(ext),
+        dtype=str,
+        na_filter=False,
+    )
+    return _format_excel_workbook(sheets)
+
+
+def _read_zip_archive(path: str) -> str:
+    max_inner = 500_000
+    with zipfile.ZipFile(path, "r") as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        lines = [f"ZIP archive – {len(names)} file(s):"]
+        for name in names[:30]:
+            info = zf.getinfo(name)
+            lines.append(f"  {name:<45s}  {info.file_size:>10,} bytes")
+        if len(names) > 30:
+            lines.append(f"  … and {len(names) - 30} more file(s).")
+
+        extracted: list[str] = []
+        for name in names:
+            info = zf.getinfo(name)
+            if info.file_size > max_inner:
+                continue
+            inner_ext = os.path.splitext(name)[1].lower()
+            try:
+                raw = zf.read(name)
+            except Exception:
+                continue
+            if inner_ext in {".xlsx", ".xls"}:
+                try:
+                    body = _read_excel_source(BytesIO(raw), label=name)
+                    extracted.append(f"\n── {name} ──\n{body[:6000]}")
+                except Exception as exc:
+                    extracted.append(f"\n── {name} ──\n(read failed: {exc})")
+            elif inner_ext in {".xml", ".txt", ".csv", ".json", ".md", ".py"}:
+                content = raw.decode("utf-8", errors="ignore")
+                extracted.append(f"\n── {name} ──\n{content[:4000]}")
+
+        result = "\n".join(lines)
+        if extracted:
+            result += "\n\nContents:" + "".join(extracted)
+        return result[:12000]
+
+
 @tool(
     "read_file",
     (
@@ -123,70 +237,7 @@ def read_file(filename: str) -> str:
 
     try:
         if ext in {".xlsx", ".xls"}:
-
-            sheets: dict = pd.read_excel(
-                path,
-                sheet_name=None,
-                engine="openpyxl",
-                dtype=str,
-                na_filter=False,
-            )
-
-            parts = []
-
-            for sheet_name, df in sheets.items():
-                df = (
-                    df.dropna(axis=0, how="all")
-                    .dropna(axis=1, how="all")
-                    .reset_index(drop=True)
-                )
-                df = df.apply(lambda col: col.str.strip().str.replace(r"\s+", " ", regex=True))
-
-                section = [f"## Sheet: {sheet_name}\n"]
-
-                if df.empty:
-                    section.append("_No data_")
-                else:
-                    # Detect "category rows" — first cell has a value, all other cells empty
-                    # Split the df into labeled sub-tables around those rows
-                    first_col = df.columns[0]
-                    other_cols = df.columns[1:]
-
-                    blocks = []
-                    current_category = None
-                    current_rows = []
-
-                    for _, row in df.iterrows():
-                        is_category_row = (
-                            row[first_col].strip() != "" and
-                            all(row[c].strip() == "" for c in other_cols)
-                        )
-                        if is_category_row:
-                            # Save previous block
-                            if current_rows:
-                                blocks.append((current_category, pd.DataFrame(current_rows)))
-                            current_category = row[first_col].strip()
-                            current_rows = []
-                        else:
-                            current_rows.append(row)
-
-                    # Save last block
-                    if current_rows:
-                        blocks.append((current_category, pd.DataFrame(current_rows)))
-
-                    if blocks:
-                        for category, block_df in blocks:
-                            block_df = block_df.reset_index(drop=True)
-                            if category:
-                                section.append(f"### Category: {category}\n")
-                            section.append(block_df.to_markdown(index=False))
-                            section.append("")  # blank line between blocks
-                    else:
-                        section.append(df.to_markdown(index=False))
-
-                parts.append("\n".join(section))
-
-            return "\n\n---\n\n".join(parts)[:8000]
+            return _file_observation(path, _read_excel_source(path, label=filename))
         if ext == ".csv":
 
             df = pd.read_csv(path)
@@ -212,7 +263,7 @@ def read_file(filename: str) -> str:
             else:
                 preview = df
 
-            return (summary + preview.to_markdown(index=False))[:8000]
+            return _file_observation(path, summary + preview.to_markdown(index=False))
 
         if ext == ".pdf":
 
@@ -665,29 +716,7 @@ def read_file(filename: str) -> str:
 
             return "\n".join(lines)[:8000]
         if ext == ".zip":
-            
-            with zipfile.ZipFile(path, "r") as zf:
-                names = zf.namelist()
-                lines = [f"ZIP archive – {len(names)} file(s):"]
-                for name in names[:30]:
-                    info = zf.getinfo(name)
-                    lines.append(f"  {name:<45s}  {info.file_size:>10,} bytes")
-                if len(names) > 30:
-                    lines.append(f"  … and {len(names) - 30} more file(s).")
-                extracted = []
-                for name in names:
-                    inner_ext = os.path.splitext(name)[1].lower()
-                    info      = zf.getinfo(name)
-                    if inner_ext in {".txt", ".csv", ".json", ".md", ".py"} and info.file_size < 50_000:
-                        try:
-                            content = zf.read(name).decode("utf-8", errors="ignore")
-                            extracted.append(f"\n── {name} ──\n{content[:1000]}")
-                        except Exception:
-                            pass
-                result = "\n".join(lines)
-                if extracted:
-                    result += "\n\nExtracted text files:" + "".join(extracted)
-                return result[:4000]
+            return _file_observation(path, _read_zip_archive(path))
 
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()[:4000]

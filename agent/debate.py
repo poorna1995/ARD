@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import canonicalise_answer
+from evaluator import canonicalise_answer
 from evaluator.parse import parse_llm_output
 from prompts.prompts import (
     DEBATE_AGENT_TEMPERATURE,
     DEBATE_SYNTHESIS_PROMPT,
     DEBATE_SYNTHESIS_SYSTEM,
-    SYSTEM_PROMPT,
-    USER_PROMPT,
+    build_debate_system,
+    user_prompt,
 )
 
 AGENT_ID = "debate_006"
@@ -56,8 +56,8 @@ class DebateAgent(BaseAgent):
         self.synthesis_user_template = DEBATE_SYNTHESIS_PROMPT[self.dataset]
         super().__init__(
             model=cfg.model,
-            system_prompt=SYSTEM_PROMPT[self.dataset]["debate"],
-            user_prompt=USER_PROMPT[self.dataset]["debate"],
+            system_prompt=build_debate_system(self.dataset),
+            user_prompt=user_prompt(self.dataset),
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             seed=cfg.seed,

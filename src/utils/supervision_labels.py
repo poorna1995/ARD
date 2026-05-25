@@ -316,7 +316,7 @@ def find_repo_root(*, start: Path | None = None) -> Path:
 
 def default_checkpoint_path(repo: Path | None = None) -> Path:
     root = repo or repo_root()
-    return root / "logs/benchmark_runs/combined_raw/checkpoint.jsonl"
+    return root / "logs/benchmark_runs/combined/checkpoint.jsonl"
 
 
 def load_supervision_labels(

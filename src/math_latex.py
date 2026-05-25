@@ -257,7 +257,7 @@ def is_math_equiv(pred: Optional[str], expected: Optional[str]) -> bool:
     Base suffix (e.g. gold ``1_6``, pred ``1``) is MATH dataset notation, not in the
     upstream repo but required for this project's gold answers.
     """
-    from evaluator.math_equivalence import is_equiv
+    from evaluator.grade import is_equiv
 
     p = preprocess_math_notation(pred) if pred is not None else ""
     e = preprocess_math_notation(expected) if expected is not None else ""

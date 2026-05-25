@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import is_correct, parse_llm_output
-from evaluator.parse import extract_reasoning_steps
-from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
+from evaluator.parse import extract_reasoning_steps, parse_llm_output
+from prompts.prompts import build_cot_system, user_prompt
 
 
 class CotAgent(BaseAgent):
@@ -19,8 +18,8 @@ class CotAgent(BaseAgent):
         self.dataset = cfg.dataset
         super().__init__(
             model=cfg.model,
-            system_prompt=SYSTEM_PROMPT[self.dataset]["cot"],
-            user_prompt=USER_PROMPT[self.dataset]["cot"],
+            system_prompt=build_cot_system(self.dataset),
+            user_prompt=user_prompt(self.dataset),
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             seed=cfg.seed,
@@ -35,45 +34,28 @@ class CotAgent(BaseAgent):
         # Use parsed steps from reasoning; fall back to API attribute if present.
         msg = response.choices[0].message
         reasoning_steps = getattr(msg, "reasoning_steps", None) or steps
+        expected = self._expected_answer(kwargs)
 
-        expected = kwargs.get("expected_answer")
-
-        response_obj = AgentResponse(
-            query             = query,
-            predicted_answer  = predicted_answer,
-            model             = self.model,
-            agent             = "cot",
-            dataset           = self.dataset,
-            latency_total     = latency,
-            latency_llm       = latency,
-            cost_usd          = self._compute_cost(
-                                    response.usage.prompt_tokens,
-                                    response.usage.completion_tokens,
-                                ),
-            prompt_tokens     = response.usage.prompt_tokens,
-            completion_tokens = response.usage.completion_tokens,
-            total_tokens      = response.usage.total_tokens,
-            reasoning_steps   = reasoning_steps,
-            num_llm_calls     = 1,
-            num_steps         = len(steps),
-            tools_available   = [],
-            tools_called      = [],
-            tools_results     = [],
-            num_tool_calls    = 0,
-            max_steps         = 1,
-            steps_taken       = 1,
-            is_stopped_early  = False,
-            expected_answer   = expected,
-            is_correct        = (
-                is_correct(predicted_answer, str(expected), dataset=self.dataset)
-                if expected else None
-            ),
-            confidence        = confidence,
-            complexity        = complexity,
-            error             = None,
-            is_failed         = False,
+        return self._core_response(
+            query=query,
+            agent="cot",
+            agent_id="cot_002",
+            predicted_answer=predicted_answer,
+            latency_total=latency,
+            latency_llm=latency,
+            expected_answer=expected,
+            is_failed=False,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            confidence=confidence,
+            complexity=complexity,
+            reasoning_steps=reasoning_steps,
+            num_llm_calls=1,
+            num_steps=len(steps),
+            max_steps=1,
+            steps_taken=1,
+            is_stopped_early=False,
         )
-        return self._finalize_response(response_obj)
 
 
 def run(query: str, model: str, dataset: str, **kwargs) -> AgentResponse:

@@ -19,6 +19,8 @@ Canonical columns
   hop_type      int   1=linear, 2=parallel, 3=branching (default 1 if omitted)
   hop_name      str   "linear" | "parallel" | "branching" | "unknown"
   answerable    bool  kept for reference (all True after filtering)
+  context       dict  normalized passages (from ``paragraphs``)
+  question_decomposition  list[dict]  sub-questions with gold answers (MuSiQue only)
 
 Config keys (all optional)
 ──────────────────────────
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 import pandas as pd
 
@@ -40,6 +43,22 @@ logger = logging.getLogger(__name__)
 
 _HOP_NAMES = {1: "linear", 2: "parallel", 3: "branching"}
 _HOP_ID_RE = re.compile(r"(\d+)hop(\d+)?")
+
+
+def _normalize_question_decomposition(value: Any) -> list[dict[str, Any]] | None:
+    """Coerce HF / parquet ndarray rows to a plain list of dicts."""
+    if value is None:
+        return None
+    from agent.episode_context import _as_list
+
+    items = _as_list(value)
+    if not items:
+        return None
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            out.append(dict(item))
+    return out or None
 
 
 def _extract_hop_info(qid: str) -> dict[str, int | str | None]:
@@ -111,9 +130,28 @@ class MuSiQueLoader(BaseLoader):
         hop_cols = df["id"].apply(_extract_hop_info).apply(pd.Series)
         df = pd.concat([df, hop_cols], axis=1)
 
+        from agent.episode_context import normalize_episode_context
+
+        if "paragraphs" in df.columns:
+            df["context"] = df["paragraphs"].apply(
+                lambda p: normalize_episode_context(p, dataset="musique")
+            )
+        elif "context" in df.columns:
+            df["context"] = df["context"].apply(
+                lambda c: normalize_episode_context(c, dataset="musique")
+            )
+
+        if "question_decomposition" in df.columns:
+            df["question_decomposition"] = df["question_decomposition"].apply(
+                _normalize_question_decomposition
+            )
+
         df = self._cap(df)
 
-        cols = ["id", "query", "answer", "split", "n_hops", "hop_type", "hop_name", "answerable"]
+        cols = [
+            "id", "query", "answer", "split", "n_hops", "hop_type",
+            "hop_name", "answerable", "context", "question_decomposition",
+        ]
         return df[[c for c in cols if c in df.columns]].reset_index(drop=True)
 
     # ── Verify ────────────────────────────────────────────────────────────

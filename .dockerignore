@@ -1,0 +1,50 @@
+# Virtualenvs and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Git and IDE
+.git/
+.gitignore
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets (mount at runtime via env_file)
+.env
+.env.*
+
+# Large generated outputs (mount as volumes instead)
+results/
+results_v1/
+results_v2/
+results1/
+final_results/
+logs/
+outputs/
+
+# Raw dataset caches (keep committed train/eval samples via COPY)
+datasets/raw/
+datasets/processed/
+datasets/cache/
+datasets/golden/
+datasets/complexity/
+datasets/gaia_attachments/
+
+# Notebooks and local experiments
+notebooks/
+experiments/
+
+# Old / archive trees (not needed in the default image)
+old/
+archive/
+
+# Docker meta (avoid recursive context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore

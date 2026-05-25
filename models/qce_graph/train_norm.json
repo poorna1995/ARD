@@ -1,0 +1,9 @@
+{
+  "max_depth": 5.0,
+  "width": 4.0,
+  "n_tool_nodes": 5.0,
+  "n_nodes": 5.0,
+  "critical_path_tool_steps": 5.0,
+  "n_repair_ops": 2.0,
+  "avg_search_query_tokens": 9.5
+}

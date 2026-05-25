@@ -25,6 +25,13 @@ def _resolve_path(filename: str) -> Path | None:
         if candidate.is_file():
             return candidate.resolve()
 
+    # GAIA attachments (same basename search as read_file)
+    from agent.tools.readfile import _resolve_existing_path
+
+    gaia_hit = _resolve_existing_path(raw)
+    if gaia_hit is not None and gaia_hit.is_file():
+        return gaia_hit.resolve()
+
     return None
 
 

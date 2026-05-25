@@ -18,9 +18,15 @@ import logging
 from functools import lru_cache
 import spacy
 
-from ..config import BAND_THRESHOLDS
-
 logger = logging.getLogger(__name__)
+
+# Upper bounds for assign_band (score < upper → label); last label is the fallback.
+BAND_THRESHOLDS: list[tuple[float, str]] = [
+    (0.20, "LOW"),
+    (0.45, "MEDIUM"),
+    (0.60, "HIGH"),
+    (1.01, "VERY HIGH"),
+]
 
 
 

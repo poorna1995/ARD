@@ -9,6 +9,7 @@ from agent.tools.arxiv import arxiv_search
 from agent.tools.github import github_search
 from agent.tools.math import math_tool
 from agent.tools.pdb import pdb_parse
+from agent.tools.retrieve import retrieve
 from agent.tools.search import web_search
 from agent.tools.webfetch import web_fetch
 from agent.tools.wikipedia import wikipedia_search
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 # read_file pulls heavy optional deps (pdfplumber, etc.) — load on demand.
 _LAZY_TOOL_IMPORTS: dict[str, tuple[str, str]] = {
     "read_file": ("agent.tools.readfile", "read_file"),
+    "python_exec": ("agent.tools.pythonexec", "python_exec"),
 }
 
 __all__ = [
@@ -30,7 +32,9 @@ __all__ = [
     "wikipedia_search",
     "pdb_parse",
     "read_file",
+    "python_exec",
     "math_tool",
+    "retrieve",
 ]
 
 

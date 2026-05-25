@@ -1,10 +1,10 @@
 """
 Extract structured answers from raw LLM completions.
 
-Contract (prompts._SCHEMA):
-  {"answer": "<value>", "confidence": <0-1>, "complexity": <0-1>}
+Contract (prompts.json_footer examples):
+  {"answer": "...", "confidence": 0.0-1.0, "complexity": 0.0-1.0}
 
-Used by all agents before grading (evaluator.eval.is_correct).
+Used by all agents before grading (evaluator.is_correct).
 """
 
 from __future__ import annotations
@@ -23,7 +23,23 @@ _FENCE_RE = re.compile(
 
 _DEFAULT_ANSWER_KEYS: tuple[str, ...] = ("answer",)
 _PLACEHOLDER_ANSWERS = frozenset(
-    {"none", "null", "n/a", "na", "unknown", "...", "<value>", "<short value>"}
+    {
+        "none",
+        "null",
+        "n/a",
+        "na",
+        "unknown",
+        "...",
+        "<value>",
+        "<short value>",
+        "<answer>",
+        "value",
+        "answer",
+        "your answer",
+        "your answer here",
+        "insert answer",
+        "tbd",
+    }
 )
 
 
@@ -140,7 +156,12 @@ def _fields_from_dict(
             continue
         answer = str(raw_ans).strip()
         if not answer:
-            continue
+            # Key present but empty — structured completion with no value.
+            return (
+                "",
+                optional_float(obj.get("confidence")),
+                optional_float(obj.get("complexity")),
+            )
         if answer.lower() in _PLACEHOLDER_ANSWERS:
             continue
         return (
@@ -205,6 +226,28 @@ def parse_llm_output_detailed(
     return ParsedLLMOutput(text, None, None, False)
 
 
+def final_json_missing_answer_field(raw: str | None) -> bool:
+    """True when text contains a JSON object but no ``answer`` key."""
+    obj = extract_last_json_dict(raw)
+    if obj is None:
+        return False
+    return "answer" not in obj
+
+
+def final_json_placeholder_answer(raw: str | None) -> bool:
+    """True when JSON has an ``answer`` key whose value is empty or a placeholder."""
+    obj = extract_last_json_dict(raw)
+    if obj is None or "answer" not in obj:
+        return False
+    raw_ans = obj["answer"]
+    if raw_ans is None:
+        return True
+    answer = str(raw_ans).strip()
+    if not answer:
+        return True
+    return answer.lower() in _PLACEHOLDER_ANSWERS
+
+
 def parse_llm_output(
     raw: str | None,
     *,
@@ -213,6 +256,40 @@ def parse_llm_output(
     """Extract (predicted_answer, confidence, complexity) from an LLM completion."""
     p = parse_llm_output_detailed(raw, answer_keys=answer_keys)
     return p.predicted_answer, p.confidence, p.complexity
+
+
+def parse_react_final_json(
+    body: str | None,
+    *,
+    answer_keys: tuple[str, ...] = _DEFAULT_ANSWER_KEYS,
+) -> ParsedLLMOutput | None:
+    """
+    ReAct Final Answer body: one JSON object only.
+
+    No plain-text fallback. Returns None if the body is not exclusively
+    a single structured object with a valid answer field.
+    """
+    if body is None:
+        return None
+    text = _strip_markdown_fences(str(body).strip())
+    if not text.startswith("{"):
+        return None
+
+    spans = _balanced_object_spans(text)
+    if len(spans) != 1:
+        return None
+    start, end = spans[0]
+    if text[:start].strip() or text[end:].strip():
+        return None
+
+    obj = _loads_dict(text[start:end])
+    if obj is None:
+        return None
+    hit = _fields_from_dict(obj, answer_keys)
+    if hit is None:
+        return None
+    ans, conf, comp = hit
+    return ParsedLLMOutput(ans, conf, comp, True)
 
 
 def extract_reasoning_steps(raw_answer: str) -> list[str]:

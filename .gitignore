@@ -49,20 +49,22 @@ notebooks/
 datasets/**
 
 # Exceptions — sample parquets + docs
-!datasets/README.md
-!datasets/train_samples/
-!datasets/train_samples/**
-!datasets/eval_samples/
-!datasets/eval_samples/**
+# !datasets/README.md
+# !datasets/train_samples/
+# !datasets/train_samples/**
+# !datasets/eval_samples/
+# !datasets/eval_samples/**
 
 # Large / cache paths (explicit; also covered by datasets/**)
 datasets/raw/**
+datasets/
 datasets/processed/**
 datasets/cache/**
 datasets/golden/**
 datasets/complexity/**
 datasets/gaia_attachments/**
-
+old/** 
+images/
 # -----------------------------------------------------------------------------
 # 5. Scripts
 # -----------------------------------------------------------------------------

@@ -1,0 +1,23 @@
+{
+  "experiment_id": "G1_hgbm_graph_balanced",
+  "n_features": 6,
+  "feature_cols": [
+    "dim_structural",
+    "dim_compositional",
+    "dim_retrieval",
+    "dim_verification",
+    "dim_uncertainty",
+    "dataset"
+  ],
+  "feature_set": "graph",
+  "weight_mode": "balanced",
+  "val_macro_f1": 0.4617,
+  "val_accuracy": 0.51,
+  "output": "predict_proba",
+  "proba_cols": [
+    "p_raw",
+    "p_cot",
+    "p_react",
+    "p_multiagent"
+  ]
+}

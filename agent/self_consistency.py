@@ -9,9 +9,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from agent.base import BaseAgent, AgentResponse
-from evaluator.eval import canonicalise_answer, is_correct, parse_llm_output
+from evaluator import canonicalise_answer, parse_llm_output
 from evaluator.parse import extract_reasoning_steps
-from prompts.prompts import SYSTEM_PROMPT, USER_PROMPT
+from prompts.prompts import build_self_consistency_system, user_prompt
 
 # Logic / math symbols in the *question* → use literal vote keys (canonical strips `a`/`an`
 # as articles and nukes operators, collapsing different formulas to the same key).
@@ -209,13 +209,10 @@ class SelfConsistencyAgent(BaseAgent):
             params.get("vote_key_strategy", "auto")
         ).strip().lower()
 
-        sc_system = SYSTEM_PROMPT[self.dataset]["self_consistency"]
-        sc_user = USER_PROMPT[self.dataset]["self_consistency"]
-
         super().__init__(
             model=cfg.model,
-            system_prompt=sc_system,
-            user_prompt=sc_user,
+            system_prompt=build_self_consistency_system(self.dataset),
+            user_prompt=user_prompt(self.dataset),
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             seed=cfg.seed,
@@ -429,27 +426,29 @@ class SelfConsistencyAgent(BaseAgent):
 
         pt_tot = sum(int(r.get("prompt_tokens", 0)) for r in path_rows)
         ct_tot = sum(int(r.get("completion_tokens", 0)) for r in path_rows)
-        tok_tot = sum(int(r.get("total_tokens", 0)) for r in path_rows)
-        cost_tot = sum(float(r.get("cost_usd", 0.0)) for r in path_rows)
         errs = [r for r in path_rows if r.get("error")]
 
         avg_conf = (
             sum(confidences) / len(confidences) if confidences else None
         )
 
-        response_obj = AgentResponse(
+        has_failure = bool(winner == "" and errs)
+        return self._core_response(
             query=query,
-            predicted_answer=winner,
-            model=self.model,
             agent="self_consistency",
-            dataset=self.dataset,
+            agent_id="self_consistency_003",
+            predicted_answer=winner,
             latency_total=time.perf_counter() - t_wall0,
             latency_llm=latency_llm,
-            latency_tools=0.0,
+            expected_answer=expected,
+            is_failed=has_failure,
+            error=("; ".join(str(r["error"]) for r in errs) if errs else None),
             prompt_tokens=pt_tot,
             completion_tokens=ct_tot,
-            total_tokens=tok_tot,
-            cost_usd=cost_tot,
+            confidence=avg_conf,
+            complexity=None,
+            finalize=not has_failure,
+            latency_tools=0.0,
             reasoning_steps=win_reasoning,
             num_llm_calls=self.num_paths,
             num_steps=len(win_reasoning),
@@ -465,18 +464,7 @@ class SelfConsistencyAgent(BaseAgent):
             selected_agent="majority_vote",
             sub_agent_responses=rows_out,
             consensus_score=consensus,
-            expected_answer=expected,
-            is_correct=(
-                is_correct(winner, str(expected), dataset=self.dataset)
-                if expected else None
-            ),
-            confidence=avg_conf,
-            complexity=None,
-            error=("; ".join(str(r["error"]) for r in errs) if errs else None),
-            is_failed=bool(winner == "" and errs),
         )
-
-        return self._finalize_response(response_obj)
 
 
 def run(query: str, model: str, dataset: str, **kwargs: Any) -> AgentResponse:

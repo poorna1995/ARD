@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: research-work:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Persist Hugging Face / sentence-transformers caches on the host
+      HF_HOME: /app/.cache/huggingface
+      TRANSFORMERS_CACHE: /app/.cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /app/.cache/sentence-transformers
+    volumes:
+      - ./datasets:/app/datasets
+      - ./models:/app/models
+      - ./results_v2:/app/results_v2
+      - huggingface_cache:/app/.cache/huggingface
+      - sentence_transformers_cache:/app/.cache/sentence-transformers
+    working_dir: /app
+    # Example: docker compose run --rm app uv run python -m orchestrator.pipeline --dataset hotpot --limit 1
+    command: ["uv", "run", "python", "-m", "orchestrator.pipeline", "--help"]
+
+volumes:
+  huggingface_cache:
+  sentence_transformers_cache:

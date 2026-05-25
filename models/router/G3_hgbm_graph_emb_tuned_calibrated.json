@@ -1,0 +1,34 @@
+{
+  "experiment_id": "G3_hgbm_graph_emb_tuned_calibrated",
+  "n_features": 22,
+  "feature_cols": [
+    "dim_structural",
+    "dim_compositional",
+    "dim_retrieval",
+    "dim_verification",
+    "dim_uncertainty",
+    "emb_0",
+    "emb_1",
+    "emb_2",
+    "emb_3",
+    "emb_4",
+    "emb_5",
+    "emb_6",
+    "emb_7",
+    "emb_8",
+    "emb_9",
+    "emb_10",
+    "emb_11",
+    "emb_12",
+    "emb_13",
+    "emb_14",
+    "emb_15",
+    "dataset"
+  ],
+  "tuned_params": {
+    "max_depth": 5,
+    "learning_rate": 0.03,
+    "max_leaf_nodes": 31
+  },
+  "calibrated": true
+}

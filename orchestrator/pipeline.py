@@ -13,6 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent.dataset_profile import agent_kwargs_from_row
+from agent.episode_context import datasets_requiring_episode_context
 from difficulty.feature_measure import TaskComplexityAnalyzer
 from prompts.prompts import DATASETS
 from routing.router import Router
@@ -20,15 +22,37 @@ from routing.router import Router
 DEFAULT_OUTPUT_ROOT = Path("results_v2/baseline_method/gaia/baseline_v2/feature_method/gpt-4o-mini/feature_v4")
 
 
+def _parquet_columns(path: Path) -> list[str]:
+    import pyarrow.parquet as pq
+
+    return list(pq.read_schema(path).names)
+
+
 def load_dataset(dataset: str, path: str | Path | None = None) -> pd.DataFrame:
-    path = Path(path) if path is not None else Path("datasets/golden") / f"{dataset}.parquet"
+    if path is not None:
+        path = Path(path)
+    else:
+        path = Path("datasets/golden") / f"{dataset}.parquet"
+        if not path.exists() and dataset in datasets_requiring_episode_context():
+            alt = Path("datasets/train_samples") / f"{dataset}.parquet"
+            if alt.exists():
+                path = alt
     if not path.exists():
         raise FileNotFoundError(f"Dataset file not found: {path}")
-    # Read minimal columns only (memory optimization).
+
+    ds = (dataset or "").strip().lower()
+    want = ["query", "answer", "context", "metadata", "n_hops", "hop_name"]
+    if ds in datasets_requiring_episode_context():
+        want.extend(["paragraphs", "episode_context", "passages"])
+
     try:
-        return pd.read_parquet(path, columns=["query", "answer"])
+        available = _parquet_columns(path)
+        cols = [c for c in want if c in available]
+        if "query" not in cols:
+            cols = ["query"] + [c for c in cols if c != "query"]
+        return pd.read_parquet(path, columns=cols or None)
     except Exception:
-        return pd.read_parquet(path, columns=["query"])
+        return pd.read_parquet(path)
 
 
 def _response_to_dict(response: Any) -> dict[str, Any]:
@@ -80,21 +104,33 @@ def run_pipeline(
     if limit is not None:
         df = df.head(limit)
 
-    queries = df["query"].fillna("").astype(str).tolist()
-    expected_answers = df["answer"].tolist() if "answer" in df.columns else [None] * len(df)
-
     analyzer = TaskComplexityAnalyzer()
-    analyzer.fit(queries)
+    fit_queries = df["query"].fillna("").astype(str).tolist()
+    analyzer.fit(fit_queries, dataset_ids=[dataset] * len(fit_queries))
 
     records: list[dict[str, Any]] = []
     append_record = records.append
-    total = len(queries)
-    for idx, (query, expected) in enumerate(zip(queries, expected_answers), start=1):
+    total = len(df)
+    for idx, row in enumerate(df.to_dict(orient="records"), start=1):
+        query = str(row.get("query") or "").strip()
+        expected = row.get("answer")
+        row_dataset = str(
+            row.get("dataset_source") or row.get("dataset") or dataset
+        ).strip().lower()
+        run_kw = agent_kwargs_from_row(row, dataset=row_dataset)
+
         if verbose:
             q_preview = query[:100].replace("\n", " ")
-            print(f"[{idx}/{total}] Routing query: {q_preview}")
+            ctx_n = len((run_kw.get("context") or {}).get("paragraphs", []))
+            ctx_hint = f" paragraphs={ctx_n}" if ctx_n else ""
+            print(f"[{idx}/{total}] Routing query: {q_preview}{ctx_hint}")
 
-        router = Router(query=query, analyzer=analyzer, dataset=dataset)
+        router = Router(
+            query=query,
+            analyzer=analyzer,
+            dataset=row_dataset,
+            **run_kw,
+        )
         routed = router.inspect()
         if verbose:
             print(
@@ -103,7 +139,7 @@ def run_pipeline(
             )
 
         record: dict[str, Any] = {
-            "dataset": dataset,
+            "dataset": row_dataset,
             "query": query,
             "expected_answer": expected,
             **routed,
@@ -113,6 +149,12 @@ def run_pipeline(
                 print(f"[{idx}/{total}] Executing agent...")
             try:
                 run_result = router.run(expected_answer=expected)
+                if row_dataset in datasets_requiring_episode_context() and not run_kw.get("context"):
+                    if verbose:
+                        print(
+                            f"[{idx}/{total}] Warning: no episode context on row "
+                            "(retrieve will fail). Rebuild parquet with context column."
+                        )
                 response = _response_to_dict(run_result.get("response"))
                 record.update(
                     {

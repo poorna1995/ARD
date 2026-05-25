@@ -39,6 +39,7 @@ SELF_CONSISTENCY_CONFIG_KEYS: set[str] = {
 
 REACT_CONFIG_KEYS: set[str] = {
     "max_steps",
+    "max_format_retries",
 }
 
 AGENT_PARAM_KEYS: set[str] = (
@@ -63,6 +64,10 @@ RUNTIME_KWARGS: frozenset[str] = frozenset({
     "phase",
     "n_hops",
     "hop_name",
+    "context",
+    "evidence_mode",
+    "allowed_tools",
+    "policy",
 })
 
 
