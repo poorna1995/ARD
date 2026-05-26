@@ -1,1 +1,47 @@
-"""Agent routing: train/eval sklearn routers and runtime Router."""
+"""G3 router: train, evaluate, predict, and paper analysis."""
+
+from routing.analysis import run_full_analysis
+from routing.router import (
+    AGENTS,
+    PROBA_COLS,
+    ROUTER_EXPERIMENT_ID,
+    ROUTER_MODEL_PATH,
+    RuntimeRouter,
+    attach_router_predictions,
+    build_eval_features,
+    ensure_eval_features,
+    evaluate,
+    load_eval_parquet,
+    load_router,
+    load_router_frame,
+    load_split,
+    predict_agent_proba,
+    resolve_dataset_name,
+    run_agent_cascade,
+    top_k_from_row,
+    save_router,
+    train_router,
+)
+
+__all__ = [
+    "AGENTS",
+    "PROBA_COLS",
+    "ROUTER_EXPERIMENT_ID",
+    "ROUTER_MODEL_PATH",
+    "RuntimeRouter",
+    "attach_router_predictions",
+    "build_eval_features",
+    "ensure_eval_features",
+    "evaluate",
+    "load_eval_parquet",
+    "load_router",
+    "load_router_frame",
+    "load_split",
+    "predict_agent_proba",
+    "resolve_dataset_name",
+    "run_agent_cascade",
+    "top_k_from_row",
+    "run_full_analysis",
+    "save_router",
+    "train_router",
+]

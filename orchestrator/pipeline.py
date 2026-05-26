@@ -1,8 +1,45 @@
+"""
+Eval orchestrator: QCE features → G3 router → optional agent execution → grading.
+
+Chains:
+  1. Load eval parquet or QCE split (train/val/test)
+  2. Ensure C(Q) + query embeddings exist (--build-features for new eval sets)
+  3. Batch-route with ``models/router/G3_hgbm_graph_emb_balanced.joblib``
+  4. Optionally execute assigned agent and grade vs gold
+
+Examples::
+
+  # GAIA: build features once, then route-only
+  uv run python orchestrator/pipeline.py --dataset gaia --build-features --route-only
+
+  # GAIA: route + run agents + grade
+  uv run python orchestrator/pipeline.py --dataset gaia --grade --limit 5
+
+  # GAIA step 1 — route only, save labels
+  uv run python orchestrator/pipeline.py --dataset gaia --route-only \\
+    --output_path results/experiments/gaia_routes.parquet
+
+  # GAIA step 2 — execute saved routes (no re-route, no feature rebuild)
+  uv run python orchestrator/pipeline.py --routes-path results/experiments/gaia_routes.parquet \\
+    --grade --limit 5
+
+  # GAIA step 2b — resume: run remaining rows and merge into existing output
+  uv run python orchestrator/pipeline.py \\
+    --routes-path results/experiments/gaia_routes.parquet --grade \\
+    --append-to results/orchestrator/gaia/pipeline_results.parquet
+
+  # QCE internal test (features prebuilt)
+  uv run python orchestrator/pipeline.py --split test --route-only
+
+  # Custom parquet
+  uv run python orchestrator/pipeline.py --data_path path/to.parquet --dataset math
+"""
+
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
+from dataclasses import asdict
 from pathlib import Path
 import sys
 from typing import Any
@@ -15,191 +52,433 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent.dataset_profile import agent_kwargs_from_row
 from agent.episode_context import datasets_requiring_episode_context
-from difficulty.feature_measure import TaskComplexityAnalyzer
-from prompts.prompts import DATASETS
-from routing.router import Router
+from agent.registry import STRATEGY_REGISTRY
+from evaluator.grade import grade as grade_answer
+from prompts.prompts_core import DATASETS, TASK_DESCRIPTION
+from routing.router import (
+    DEFAULT_AGENT_MODEL,
+    ROUTER_MODEL_PATH,
+    RuntimeRouter,
+    ensure_eval_features,
+    eval_base_frame,
+    load_eval_parquet,
+    load_router_frame,
+    load_split,
+    resolve_dataset_name,
+    top_k_from_row,
+)
 
-DEFAULT_OUTPUT_ROOT = Path("results_v2/baseline_method/gaia/baseline_v2/feature_method/gpt-4o-mini/feature_v4")
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "results/orchestrator"
+QCE_SPLITS = ("train", "val", "test")
+ROUTE_AGENT_COLS = ("router_pred", "assigned_agent")
+EXECUTION_DONE_COLS = ("predicted_answer", "response_predicted_answer")
 
 
-def _parquet_columns(path: Path) -> list[str]:
-    import pyarrow.parquet as pq
-
-    return list(pq.read_schema(path).names)
-
-
-def load_dataset(dataset: str, path: str | Path | None = None) -> pd.DataFrame:
-    if path is not None:
-        path = Path(path)
-    else:
-        path = Path("datasets/golden") / f"{dataset}.parquet"
-        if not path.exists() and dataset in datasets_requiring_episode_context():
-            alt = Path("datasets/train_samples") / f"{dataset}.parquet"
-            if alt.exists():
-                path = alt
-    if not path.exists():
-        raise FileNotFoundError(f"Dataset file not found: {path}")
-
-    ds = (dataset or "").strip().lower()
-    want = ["query", "answer", "context", "metadata", "n_hops", "hop_name"]
-    if ds in datasets_requiring_episode_context():
-        want.extend(["paragraphs", "episode_context", "passages"])
-
-    try:
-        available = _parquet_columns(path)
-        cols = [c for c in want if c in available]
-        if "query" not in cols:
-            cols = ["query"] + [c for c in cols if c != "query"]
-        return pd.read_parquet(path, columns=cols or None)
-    except Exception:
+def _read_table(path: Path) -> pd.DataFrame:
+    if path.suffix.lower() == ".csv":
+        return pd.read_csv(path)
+    if path.suffix.lower() in {".parquet", ".pq"}:
         return pd.read_parquet(path)
+    raise ValueError(f"Unsupported routes file type: {path.suffix} (use .parquet or .csv)")
+
+
+def load_routes_frame(
+    routes_path: str | Path,
+    *,
+    dataset: str | None = None,
+    data_path: str | Path | None = None,
+    split: str | None = None,
+) -> pd.DataFrame:
+    """
+    Load a route-only artifact (``router_pred`` / proba columns) for execution.
+
+    If ``query`` is missing, merges eval rows from ``--dataset``, ``--data_path``, or ``--split``.
+    """
+    path = Path(routes_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Routes file not found: {path}")
+
+    df = _read_table(path)
+    if not any(c in df.columns for c in ROUTE_AGENT_COLS):
+        raise ValueError(f"Routes file must include one of {ROUTE_AGENT_COLS}: {path}")
+
+    if "router_pred" not in df.columns:
+        df["router_pred"] = df["assigned_agent"].astype(str)
+    if "assigned_agent" not in df.columns:
+        df["assigned_agent"] = df["router_pred"].astype(str)
+
+    needs_merge = (
+        "query" not in df.columns
+        or df["query"].isna().all()
+        or df["query"].astype(str).str.strip().eq("").all()
+    )
+    if needs_merge:
+        if split is None and not dataset and data_path is None:
+            raise ValueError(
+                "Routes file has no query column; pass --dataset, --data_path, or --split to merge eval rows."
+            )
+        eval_df, _ = load_eval_frame(dataset=dataset, data_path=data_path, split=split)
+        key = "training_id"
+        if key not in df.columns or key not in eval_df.columns:
+            raise KeyError(f"Cannot merge routes with eval data without {key!r}")
+        merge_cols = [c for c in eval_df.columns if c not in df.columns or c == key]
+        df = df.merge(eval_df[merge_cols], on=key, how="left", suffixes=("", "_eval"))
+        if "query" not in df.columns:
+            raise KeyError("Merged eval frame still missing query")
+
+    if "expected_answer" not in df.columns:
+        for alt in ("answer", "gold", "reference"):
+            if alt in df.columns:
+                df["expected_answer"] = df[alt]
+                break
+
+    return df
 
 
 def _response_to_dict(response: Any) -> dict[str, Any]:
     if hasattr(response, "__dataclass_fields__"):
-        payload = asdict(response)
-    elif isinstance(response, dict):
-        payload = response
-    else:
-        payload = {"react_response": str(response)}
-    return payload
+        return asdict(response)
+    if isinstance(response, dict):
+        return response
+    return {"raw": str(response)}
 
 
 def _dataframe_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """PyArrow cannot write some nested types (e.g. empty dict as struct). JSON-encode dict/list cells."""
     out = df.copy()
     for col in out.columns:
         series = out[col]
         if series.dtype != object:
             continue
-        has_container = series.map(lambda x: isinstance(x, (dict, list))).any()
-        if not has_container:
-            continue
-        out[col] = series.map(
-            lambda x: (
-                json.dumps(x, ensure_ascii=False, default=str)
-                if isinstance(x, (dict, list))
-                else x
+        if series.map(lambda x: isinstance(x, (dict, list))).any():
+            out[col] = series.map(
+                lambda x: (
+                    json.dumps(x, ensure_ascii=False, default=str)
+                    if isinstance(x, (dict, list))
+                    else x
+                )
             )
-        )
     return out
 
 
+def load_eval_frame(
+    *,
+    dataset: str | None,
+    data_path: str | Path | None,
+    split: str | None,
+) -> tuple[pd.DataFrame, str]:
+    """
+    Return (dataframe, feature_tag).
+
+    ``feature_tag`` names on-disk QCE artifacts (e.g. gaia, test).
+    """
+    if split is not None:
+        if split not in QCE_SPLITS:
+            raise ValueError(f"--split must be one of {QCE_SPLITS}")
+        df = load_split(split, with_embeddings=True)
+        return df, split
+
+    if not dataset:
+        raise ValueError("Provide --dataset or --split")
+
+    ds_key = resolve_dataset_name(dataset)
+    if ds_key not in TASK_DESCRIPTION and ds_key not in DATASETS:
+        known = sorted(set(DATASETS) | set(TASK_DESCRIPTION))
+        raise ValueError(f"Unknown dataset {dataset!r}. Known keys: {known}")
+
+    if data_path is not None:
+        df = eval_base_frame(Path(data_path), dataset=ds_key)
+        tag = Path(data_path).stem
+    else:
+        df = load_eval_parquet(ds_key)
+        tag = dataset.strip().lower()
+    return df, tag
+
+
+def _routing_summary(df: pd.DataFrame) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "n": len(df),
+        "router_distribution": df["router_pred"].value_counts().to_dict()
+        if "router_pred" in df.columns
+        else {},
+    }
+    if "oracle_agent" in df.columns and "router_pred" in df.columns:
+        mask = df["oracle_agent"].astype(str).isin(STRATEGY_REGISTRY)
+        sub = df[mask]
+        summary["n_with_oracle"] = int(len(sub))
+        if len(sub):
+            summary["route_accuracy_vs_oracle"] = float(
+                (sub["router_pred"] == sub["oracle_agent"]).mean()
+            )
+    if "is_correct" in df.columns:
+        summary["execution_accuracy"] = float(
+            pd.to_numeric(df["is_correct"], errors="coerce").fillna(0).mean()
+        )
+    return summary
+
+
+def _row_execution_done(row: Mapping[str, Any], *, retry_failed: bool = False) -> bool:
+    """True if this row already has a stored agent answer (skip on resume)."""
+    if retry_failed and row.get("is_failed"):
+        return False
+    for key in EXECUTION_DONE_COLS:
+        if str(row.get(key) or "").strip():
+            return True
+    return False
+
+
+def _done_training_ids(df: pd.DataFrame, *, retry_failed: bool = False) -> set[Any]:
+    if df is None or df.empty or "training_id" not in df.columns:
+        return set()
+    return {
+        r["training_id"]
+        for r in df.to_dict(orient="records")
+        if _row_execution_done(r, retry_failed=retry_failed)
+    }
+
+
+def merge_pipeline_results(
+    routes_df: pd.DataFrame,
+    existing: pd.DataFrame | None,
+    new_records: list[dict[str, Any]],
+) -> pd.DataFrame:
+    """Merge prior + new execution rows in ``routes_df`` order (full route set)."""
+    by_id: dict[Any, dict[str, Any]] = {}
+    if existing is not None and not existing.empty:
+        for rec in existing.to_dict(orient="records"):
+            by_id[rec.get("training_id")] = rec
+    for rec in new_records:
+        by_id[rec.get("training_id")] = rec
+
+    out: list[dict[str, Any]] = []
+    for row in routes_df.to_dict(orient="records"):
+        tid = row.get("training_id")
+        if tid in by_id:
+            out.append(by_id[tid])
+    return pd.DataFrame.from_records(out)
+
+
 def run_pipeline(
-    dataset: str = "gaia",
+    *,
+    dataset: str | None = "gaia",
     data_path: str | Path | None = None,
+    split: str | None = None,
+    routes_path: str | Path | None = None,
+    append_to: str | Path | None = None,
+    retry_failed: bool = False,
     output_path: str | Path | None = None,
     jsonl_output_path: str | Path | None = None,
+    router_path: str | Path | None = None,
+    build_features: bool = False,
+    force_refresh_features: bool = False,
     execute_agents: bool = True,
+    react_only: bool = False,
+    cascade_on_fail: bool = False,
+    cascade_k: int = 3,
+    grade: bool = False,
+    model: str = DEFAULT_AGENT_MODEL,
     limit: int | None = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    if dataset not in DATASETS:
-        raise ValueError(f"Unsupported dataset '{dataset}'. Expected one of: {DATASETS}")
+    if routes_path is not None and (build_features or force_refresh_features):
+        if verbose:
+            print("Note: --build-features / --force-refresh-features ignored with --routes-path.")
 
-    df = load_dataset(dataset=dataset, path=data_path)
-    if "query" not in df.columns:
-        raise KeyError(f"Missing required 'query' column in dataset '{dataset}'.")
+    if routes_path is not None:
+        routed_df = load_routes_frame(
+            routes_path,
+            dataset=dataset,
+            data_path=data_path,
+            split=split,
+        )
+        tag = Path(routes_path).stem
+        if verbose:
+            dist = routed_df["router_pred"].value_counts().to_dict()
+            print(f"Loaded {len(routed_df)} pre-routed rows from {routes_path}")
+            print(f"  router_pred distribution: {dist}")
+    else:
+        df, tag = load_eval_frame(dataset=dataset, data_path=data_path, split=split)
 
-    if limit is not None:
-        df = df.head(limit)
-
-    analyzer = TaskComplexityAnalyzer()
-    fit_queries = df["query"].fillna("").astype(str).tolist()
-    analyzer.fit(fit_queries, dataset_ids=[dataset] * len(fit_queries))
-
-    records: list[dict[str, Any]] = []
-    append_record = records.append
-    total = len(df)
-    for idx, row in enumerate(df.to_dict(orient="records"), start=1):
-        query = str(row.get("query") or "").strip()
-        expected = row.get("answer")
-        row_dataset = str(
-            row.get("dataset_source") or row.get("dataset") or dataset
-        ).strip().lower()
-        run_kw = agent_kwargs_from_row(row, dataset=row_dataset)
+        if split is None:
+            base_cols = [c for c in df.columns if not c.startswith("emb_") and c != "oracle_agent"]
+            base = df[base_cols].copy()
+            if "training_id" not in base.columns:
+                raise KeyError("Eval frame missing training_id")
+            df = ensure_eval_features(
+                base,
+                tag,
+                build=build_features,
+                force_refresh=force_refresh_features,
+                verbose=verbose,
+            )
+        elif build_features:
+            if verbose:
+                print("Note: --build-features ignored for QCE splits (use qce pipeline).")
 
         if verbose:
-            q_preview = query[:100].replace("\n", " ")
-            ctx_n = len((run_kw.get("context") or {}).get("paragraphs", []))
-            ctx_hint = f" paragraphs={ctx_n}" if ctx_n else ""
-            print(f"[{idx}/{total}] Routing query: {q_preview}{ctx_hint}")
+            print(f"Routing {len(df)} rows with {router_path or ROUTER_MODEL_PATH}…")
+        routed_df = load_router_frame(df, router_path=router_path)
 
-        router = Router(
-            query=query,
-            analyzer=analyzer,
-            dataset=row_dataset,
-            **run_kw,
-        )
-        routed = router.inspect()
+    routes_full_df = routed_df
+    existing_df: pd.DataFrame | None = None
+    if append_to is not None:
+        append_path = Path(append_to)
+        if not append_path.is_file():
+            raise FileNotFoundError(f"--append-to file not found: {append_path}")
+        existing_df = _read_table(append_path)
+        done_ids = _done_training_ids(existing_df, retry_failed=retry_failed)
+        pending_df = routes_full_df[~routes_full_df["training_id"].isin(done_ids)].copy()
         if verbose:
             print(
-                f"[{idx}/{total}] -> assigned_agent={routed.get('assigned_agent')} "
-                f"overall={routed.get('overall')}"
+                f"Resume: {len(done_ids)} done, {len(pending_df)} pending "
+                f"(of {len(routes_full_df)} routes)"
+            )
+        routed_df = pending_df
+    else:
+        done_ids = set()
+
+    if limit is not None:
+        routed_df = routed_df.head(limit).copy()
+
+    records: list[dict[str, Any]] = []
+    total = len(routed_df)
+    n_routes = len(routes_full_df)
+    for idx, row in enumerate(routed_df.to_dict(orient="records"), start=1):
+        query = str(row.get("query") or "").strip()
+        expected = row.get("expected_answer") or row.get("answer")
+        row_dataset = resolve_dataset_name(
+            str(row.get("dataset_source") or row.get("dataset") or dataset or "gaia")
+        )
+        run_kw = agent_kwargs_from_row(row, dataset=row_dataset)
+        assigned = str(row.get("assigned_agent") or row.get("router_pred") or "")
+
+        if verbose:
+            preview = query[:100].replace("\n", " ")
+            prog = f"[{idx}/{total}]"
+            if append_to is not None:
+                prog = f"[{len(done_ids) + idx}/{n_routes}] ({idx}/{total} pending)"
+            print(
+                f"{prog} router={assigned} "
+                f"max_prob={row.get('max_prob', 0):.3f} overall={row.get('overall')} "
+                f"| {preview}"
             )
 
+        top3 = top_k_from_row(row, k=cascade_k)
         record: dict[str, Any] = {
+            "training_id": row.get("training_id"),
             "dataset": row_dataset,
             "query": query,
             "expected_answer": expected,
-            **routed,
+            "assigned_agent": assigned,
+            "router_pred": assigned,
+            "overall": row.get("overall"),
+            "max_prob": row.get("max_prob"),
+            "margin_top2": row.get("margin_top2"),
+            "router_second": row.get("router_second") or (top3[1][0] if len(top3) > 1 else None),
+            "router_third": row.get("router_third") or (top3[2][0] if len(top3) > 2 else None),
+            "top3_agents": top3,
+            "router_experiment": row.get("router_experiment"),
+            "p_raw": row.get("p_raw"),
+            "p_cot": row.get("p_cot"),
+            "p_react": row.get("p_react"),
+            "p_multiagent": row.get("p_multiagent"),
         }
-        if execute_agents:
-            if verbose:
-                print(f"[{idx}/{total}] Executing agent...")
+        if row.get("oracle_agent") is not None:
+            record["oracle_agent"] = row.get("oracle_agent")
+
+        should_run = execute_agents and assigned in STRATEGY_REGISTRY
+        if react_only and assigned != "react":
+            should_run = False
+
+        if should_run:
+            router = RuntimeRouter.from_dataframe_row(
+                row, model=model, router_path=router_path, **run_kw
+            )
             try:
-                run_result = router.run(expected_answer=expected)
-                if row_dataset in datasets_requiring_episode_context() and not run_kw.get("context"):
+                if cascade_on_fail:
                     if verbose:
-                        print(
-                            f"[{idx}/{total}] Warning: no episode context on row "
-                            "(retrieve will fail). Rebuild parquet with context column."
-                        )
-                response = _response_to_dict(run_result.get("response"))
+                        agents_s = " → ".join(a for a, _ in top3)
+                        print(f"[{idx}/{total}] Cascade (top-{cascade_k}): {agents_s} …")
+                    run_result = router.run_cascade(expected_answer=expected, k=cascade_k)
+                    response = _response_to_dict(run_result.get("response"))
+                    record.update(
+                        {
+                            "executed_agent": run_result.get("executed_agent"),
+                            "cascade_rank": run_result.get("cascade_rank"),
+                            "cascade_attempts": run_result.get("cascade_attempts"),
+                        }
+                    )
+                else:
+                    if verbose:
+                        print(f"[{idx}/{total}] Executing {assigned} ({model})…")
+                    run_result = router.run(expected_answer=expected)
+                    response = _response_to_dict(run_result.get("response"))
+                    record["executed_agent"] = assigned
+                    record["cascade_rank"] = 1
+
+                pred = response.get("predicted_answer") or response.get("answer") or ""
                 record.update(
                     {
-                        "assigned_agent": run_result.get("agent"),
                         "model": run_result.get("model"),
-                        "effective_config": run_result.get("effective_config"),
-                        "config_used_aliases": run_result.get("config_used_aliases"),
-                        "config_unknown_keys": run_result.get("config_unknown_keys"),
-                        # "run_overall": run_result.get("overall"),
+                        "predicted_answer": pred,
                         **{f"response_{k}": v for k, v in response.items()},
                     }
                 )
-                if verbose:
-                    print(
-                        f"[{idx}/{total}] Done -> run_agent={run_result.get('agent')} "
-                        f"model={run_result.get('model')} "
-                        f"failed={response.get('is_failed')}"
+                if grade and expected is not None:
+                    record["is_correct"] = grade_answer(
+                        str(pred), str(expected), dataset=row_dataset
                     )
+                if verbose:
+                    exec_agent = record.get("executed_agent", assigned)
                     print(
-                        f"[{idx}/{total}] Answers -> final={response.get('answer')} "
-                        f"expected={expected}"
+                        f"[{idx}/{total}] Done agent={exec_agent} "
+                        f"rank={record.get('cascade_rank')} failed={response.get('is_failed')} "
+                        f"correct={record.get('is_correct')} pred={str(pred)[:80]!r}"
                     )
             except Exception as exc:
-                record.update(
-                    {
-                        "assigned_agent": routed.get("assigned_agent"),
-                        "model": routed.get("model_primary"),
-                        # "response_error": str(exc),
-                        "is_failed": True,
-                    }
-                )
+                record["is_failed"] = True
+                record["error"] = str(exc)
                 if verbose:
-                    print(f"[{idx}/{total}] Failed -> error={exc}")
-        elif verbose:
-            print(f"[{idx}/{total}] Route-only mode; skipped execution.")
-        append_record(record)
+                    print(f"[{idx}/{total}] Failed: {exc}")
+        elif execute_agents and verbose:
+            print(f"[{idx}/{total}] Skipped execution (react_only={react_only}).")
 
-    results_df = pd.DataFrame.from_records(records)
-    output = Path(output_path) if output_path is not None else DEFAULT_OUTPUT_ROOT /"orchestrator_pipeline_v3.parquet"
+        records.append(record)
+
+    if append_to is not None:
+        results_df = merge_pipeline_results(routes_full_df, existing_df, records)
+    else:
+        results_df = (
+            merge_pipeline_results(routes_full_df, None, records)
+            if records
+            else pd.DataFrame()
+        )
+
+    summary = _routing_summary(results_df if len(results_df) else routes_full_df)
+    if append_to is not None:
+        summary["n_pending_this_run"] = total
+        summary["n_done_before"] = len(done_ids)
+        summary["n_total_routes"] = n_routes
+    if grade and "is_correct" in results_df.columns:
+        summary["graded_accuracy"] = float(
+            pd.to_numeric(results_df["is_correct"], errors="coerce").fillna(0).mean()
+        )
+    if cascade_on_fail and "cascade_rank" in results_df.columns:
+        ranks = pd.to_numeric(results_df["cascade_rank"], errors="coerce")
+        summary["cascade_mean_rank"] = float(ranks.mean())
+        summary["cascade_frac_needed_fallback"] = float((ranks > 1).mean())
+
+    out_tag = split or (dataset or "eval")
+    if output_path is not None:
+        output = Path(output_path)
+    elif append_to is not None:
+        output = Path(append_to)
+    else:
+        output = DEFAULT_OUTPUT_ROOT / out_tag / "pipeline_results.parquet"
     output.parent.mkdir(parents=True, exist_ok=True)
-    if "overall" not in results_df.columns:
-        raise RuntimeError("Missing 'overall' in results; routing output is incomplete.")
-    parquet_df = _dataframe_for_parquet(results_df)
-    parquet_df.to_parquet(output, index=False)
-    print(f"Saved pipeline results to: {output}")
+    _dataframe_for_parquet(results_df).to_parquet(output, index=False)
+
+    summary_path = output.with_suffix(".summary.json")
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     jsonl_output = (
         Path(jsonl_output_path)
@@ -207,57 +486,129 @@ def run_pipeline(
         else output.with_suffix(".jsonl")
     )
     jsonl_output.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_records = results_df.to_dict(orient="records")
     with jsonl_output.open("w", encoding="utf-8") as f:
-        for record in records:
+        for record in jsonl_records:
             f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
-    print(f"Saved per-query JSONL to: {jsonl_output}")
 
+    if verbose:
+        print(f"Saved: {output}")
+        print(f"Summary: {summary_path}")
+        print(json.dumps(summary, indent=2))
     return results_df
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Module-level orchestrator pipeline.")
-    parser.add_argument("--dataset", choices=DATASETS, default="gaia")
-    parser.add_argument("--data_path", default=None, help="Optional custom parquet path.")
-    parser.add_argument("--output_path", default=None, help="Where to save pipeline output parquet.")
-    parser.add_argument("--jsonl_output_path", default=None, help="Where to save per-query JSONL.")
-    parser.add_argument(
-        "--route_only",
-        action="store_true",
-        help="Only route tasks; skip agent execution.",
+    eval_datasets = sorted(
+        {p.stem for p in (REPO_ROOT / "datasets/eval_samples").glob("*.parquet")}
+    )
+    parser = argparse.ArgumentParser(
+        description="QCE features → G3 router → optional agent run (eval orchestrator)."
     )
     parser.add_argument(
-        "--assigned_react_only",
-        action="store_true",
-        help="Execute only queries assigned to react; skip all others.",
+        "--dataset",
+        choices=eval_datasets + ["mmlu_pro"],
+        default="gaia",
+        help="Eval parquet under datasets/eval_samples/ (ignored if --split set).",
+    )
+    parser.add_argument("--data_path", default=None, help="Custom eval parquet path.")
+    parser.add_argument(
+        "--split",
+        choices=QCE_SPLITS,
+        default=None,
+        help="Use QCE v1 split (train/val/test) instead of eval_samples parquet.",
+    )
+    parser.add_argument("--output_path", default=None)
+    parser.add_argument("--jsonl_output_path", default=None)
+    parser.add_argument(
+        "--router-path",
+        dest="router_path",
+        default=None,
+        help=f"Trained router joblib (default: {ROUTER_MODEL_PATH.name}).",
     )
     parser.add_argument(
-        "--all_assigned_agents",
+        "--build-features",
         action="store_true",
-        help="Override react-only mode and execute whichever agent is assigned.",
+        help="Decompose + C(Q) + embeddings for eval parquet (needs OPENAI_API_KEY).",
     )
     parser.add_argument(
-        "--full_response",
+        "--force-refresh-features",
         action="store_true",
-        help="Store full agent response payload (higher memory and disk usage).",
+        help="Re-run LLM decompose even if cache exists.",
     )
-    parser.add_argument("--limit", type=int, default=None, help="Optional row limit.")
     parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Disable per-query progress logs.",
+        "--routes-path",
+        dest="routes_path",
+        default=None,
+        help="Parquet/CSV with router_pred (and optional p_*). Skip routing; run agents on these labels.",
     )
+    parser.add_argument(
+        "--append-to",
+        dest="append_to",
+        default=None,
+        help="Existing pipeline output; skip rows with predicted_answer, run the rest, merge back.",
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="With --append-to, re-run rows that failed or have empty predicted_answer.",
+    )
+    parser.add_argument(
+        "--route-only",
+        action="store_true",
+        help="Route only; skip agent execution. Incompatible with --routes-path.",
+    )
+    parser.add_argument(
+        "--react-only",
+        action="store_true",
+        help="Execute only rows assigned to react.",
+    )
+    parser.add_argument(
+        "--cascade",
+        action="store_true",
+        help="On agent failure, try 2nd then 3rd ranked agents (top-3 by router proba).",
+    )
+    parser.add_argument(
+        "--cascade-k",
+        type=int,
+        default=3,
+        help="Max agents to try in cascade mode (default: 3).",
+    )
+    parser.add_argument(
+        "--grade",
+        action="store_true",
+        help="Grade predicted answers vs expected (when executing agents).",
+    )
+    parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--quiet", action="store_true")
     return parser
 
 
 if __name__ == "__main__":
     args = _build_parser().parse_args()
+    if args.routes_path and args.route_only:
+        raise SystemExit("Use either --routes-path (execute saved routes) or --route-only, not both.")
+    if args.append_to and not args.routes_path:
+        raise SystemExit("--append-to requires --routes-path (full routed GAIA set).")
     run_pipeline(
-        dataset=args.dataset,
+        dataset=args.dataset if not args.split else None,
         data_path=args.data_path,
+        split=args.split,
+        routes_path=args.routes_path,
+        append_to=args.append_to,
+        retry_failed=args.retry_failed,
         output_path=args.output_path,
         jsonl_output_path=args.jsonl_output_path,
+        router_path=args.router_path,
+        build_features=args.build_features,
+        force_refresh_features=args.force_refresh_features,
         execute_agents=not args.route_only,
+        react_only=args.react_only,
+        cascade_on_fail=args.cascade,
+        cascade_k=args.cascade_k,
+        grade=args.grade,
+        model=args.model,
         limit=args.limit,
         verbose=not args.quiet,
     )

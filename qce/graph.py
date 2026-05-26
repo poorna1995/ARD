@@ -1,14 +1,14 @@
 """Step 2.2 — build procedure DAGs from plans and emit graph + planning features.
 
 C(Q) v1.1 blends DAG topology/tools with plan semantics (relation_type,
-answer_granularity, search_query). Five ``dim_*`` columns are the router input;
+answer_granularity, search_query). Five ``dim_*`` columns are router experiment 1;
+seven ``dim7_*`` columns (v2.0) are experiment 2 — procedural burden, not dataset/tool ids.
 ``complexity_graph`` remains a secondary scalar (Step 2.4).
 
-  structural      topology + relation-type diversity
-  compositional   width/merge + compositional/temporal/comparison relations
-  retrieval       tools + search-query burden + scoped dependent retrieves
-  verification    verify steps + answer-granularity spread
-  uncertainty     plan_trust, repairs, terminal-sink mismatch risk
+  v1 dim_*        experiment 1 (unchanged formulas)
+  v2 dim7_*       structural, compositional, retrieval (info acquisition),
+                  execution (files/code/API), coordination (orchestration),
+                  verification, uncertainty
 """
 
 from __future__ import annotations
@@ -63,6 +63,22 @@ DIM_COLS = (
     "dim_uncertainty",
 )
 
+# C(Q) v2 — seven procedural-burden dimensions (experiment 2; v1 dim_* unchanged).
+C_VECTOR_VER_V2 = "c-vector-v2.0"
+DIM7_COLS = (
+    "dim7_structural",
+    "dim7_compositional",
+    "dim7_retrieval",
+    "dim7_execution",
+    "dim7_coordination",
+    "dim7_verification",
+    "dim7_uncertainty",
+)
+_EXECUTION_TOOLS = frozenset({"read_file", "pdb_parse", "python_exec", "math_tool", "math", "code"})
+_RETRIEVAL_TOOLS = WEB_TOOLS | frozenset({"retrieve"})
+_TEMPORAL_RELATIONS = frozenset({"temporal"})
+_COMPARISON_RELATIONS = frozenset({"comparison"})
+
 
 _PLACEHOLDER_QUERY_RE = re.compile(
     r"(?i)\b(from t\d+|entity from|country from|city from|person from|step t\d+)\b"
@@ -109,7 +125,10 @@ def build_task_dag(plan: dict[str, Any]) -> GraphBuildResult:
         fc = str(plan.get("final_constraint", ""))
         feats.update(_plan_step_signals([]))
         feats.update(_plan_semantic_signals([], fc))
+        feats.update(_plan_interaction_signals(g, [], []))
         feats.update(_conceptual_dims(feats, TrainNorm()))
+        feats.update(_conceptual_dims_v7(feats, TrainNorm()))
+        feats["c_vector_ver_v2"] = C_VECTOR_VER_V2
         feats.update(training_id=tid, dataset=dataset, final_constraint=fc)
         return GraphBuildResult(tid, dataset, g, feats, repair_log, feats["graph_status"])
 
@@ -146,7 +165,10 @@ def build_task_dag(plan: dict[str, Any]) -> GraphBuildResult:
     feats = _integrity_and_dims(g, ids, repair_log, graph_status)
     feats.update(_plan_step_signals(on_graph))
     feats.update(_plan_semantic_signals(on_graph, fc))
+    feats.update(_plan_interaction_signals(g, ids, on_graph))
     feats.update(_conceptual_dims(feats, TrainNorm()))
+    feats.update(_conceptual_dims_v7(feats, TrainNorm()))
+    feats["c_vector_ver_v2"] = C_VECTOR_VER_V2
     feats.update(training_id=tid, dataset=dataset, final_constraint=fc)
     return GraphBuildResult(tid, dataset, g, feats, repair_log, feats["graph_status"])
 
@@ -186,6 +208,9 @@ def rescore_dataframe(df, norm: TrainNorm | None = None):
     ]
     for col in DIM_COLS:
         out[col] = [_conceptual_dims(row.to_dict(), norm)[col] for _, row in out.iterrows()]
+    for col in DIM7_COLS:
+        out[col] = [_conceptual_dims_v7(row.to_dict(), norm)[col] for _, row in out.iterrows()]
+    out["c_vector_ver_v2"] = C_VECTOR_VER_V2
     return out
 
 
@@ -458,8 +483,186 @@ def _complexity_graph(f: dict[str, Any], norm: TrainNorm) -> float:
     return round(sum(w[k] * t for k, t in zip(keys, terms)), 4)
 
 
+def _plan_interaction_signals(
+    g: nx.DiGraph,
+    ids: list[str],
+    subtasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Tool-sequence / dependency signals for dim7_execution and dim7_coordination."""
+    n = len(subtasks)
+    if not n or not ids:
+        return {
+            "retrieve_step_fraction": 0.0,
+            "execution_external_fraction": 0.0,
+            "dependent_hop_fraction": 0.0,
+            "temporal_relation_fraction": 0.0,
+            "comparison_relation_fraction": 0.0,
+            "tool_switching": 0.0,
+            "cross_tool_dep_fraction": 0.0,
+            "execution_tool_diversity": 0.0,
+            "critical_retrieve_fraction": 0.0,
+        }
+
+    id_set = set(ids)
+    tools_by_id = {
+        str(st["id"]).strip(): str(st.get("tool", "none")).strip().lower() or "none"
+        for st in subtasks
+        if str(st.get("id", "")).strip() in id_set
+    }
+    ordered_ids = [i for i in ids if i in tools_by_id]
+
+    n_retrieve = sum(
+        1 for st in subtasks if str(st.get("step_type", "")).strip().lower() == "retrieve"
+    )
+    n_with_deps = sum(1 for st in subtasks if st.get("depends_on"))
+    relations = [str(st.get("relation_type", "")).strip().lower() for st in subtasks]
+    n_temporal = sum(1 for r in relations if r in _TEMPORAL_RELATIONS)
+    n_comparison = sum(1 for r in relations if r in _COMPARISON_RELATIONS)
+
+    exec_nodes = sum(
+        1
+        for t in tools_by_id.values()
+        if t in _EXECUTION_TOOLS and t not in _RETRIEVAL_TOOLS
+    )
+    n_tool_nodes = sum(1 for i in ids if g.nodes[i].get("is_tool"))
+    execution_external_fraction = exec_nodes / max(n_tool_nodes, 1) if n_tool_nodes else 0.0
+
+    switches = 0
+    for a, b in zip(ordered_ids, ordered_ids[1:]):
+        ta, tb = tools_by_id[a], tools_by_id[b]
+        if ta != tb and ta != "none" and tb != "none":
+            switches += 1
+    tool_switching = switches / max(len(ordered_ids) - 1, 1)
+
+    cross_tool = 0
+    dep_edges = 0
+    for u, v, d in g.edges(data=True):
+        if d.get("edge_kind") != "dependency" or u not in id_set or v not in id_set:
+            continue
+        dep_edges += 1
+        tu = tools_by_id.get(u, "none")
+        tv = tools_by_id.get(v, "none")
+        if tu != tv and tu != "none" and tv != "none":
+            cross_tool += 1
+    cross_tool_dep_fraction = cross_tool / max(dep_edges, 1)
+
+    unique_exec = len({t for t in tools_by_id.values() if t in _EXECUTION_TOOLS and t != "none"})
+    execution_tool_diversity = unique_exec / max(n_tool_nodes, 1) if n_tool_nodes else 0.0
+
+    crit_len, crit_tool_steps, _ = _critical_path(g, ids, id_set)
+    critical_retrieve_fraction = 0.0
+    if crit_len > 0 and ordered_ids:
+        try:
+            path = [n for n in nx.dag_longest_path(g.subgraph(id_set)) if n in id_set]
+        except nx.NetworkXError:
+            path = ordered_ids
+        web_on_path = sum(1 for n in path if tools_by_id.get(n, "none") in _RETRIEVAL_TOOLS)
+        critical_retrieve_fraction = web_on_path / max(len(path), 1)
+    else:
+        critical_retrieve_fraction = float(
+            sum(1 for t in tools_by_id.values() if t in _RETRIEVAL_TOOLS)
+        ) / max(n_tool_nodes, 1)
+
+    return {
+        "retrieve_step_fraction": round(n_retrieve / n, 4),
+        "execution_external_fraction": round(execution_external_fraction, 4),
+        "dependent_hop_fraction": round(n_with_deps / n, 4),
+        "temporal_relation_fraction": round(n_temporal / n, 4),
+        "comparison_relation_fraction": round(n_comparison / n, 4),
+        "tool_switching": round(tool_switching, 4),
+        "cross_tool_dep_fraction": round(cross_tool_dep_fraction, 4),
+        "execution_tool_diversity": round(execution_tool_diversity, 4),
+        "critical_retrieve_fraction": round(critical_retrieve_fraction, 4),
+    }
+
+
+def _avg_terms(terms: list[float]) -> float:
+    return round(sum(terms) / max(len(terms), 1), 4)
+
+
+def _conceptual_dims_v7(f: dict[str, Any], norm: TrainNorm) -> dict[str, float]:
+    """
+    C(Q) v2: procedural burden (7D). Dataset-agnostic; derived from plan DAG only.
+
+    Does not encode dataset id or raw tool names — only aggregated plan signals.
+    """
+    structural = _avg_terms(
+        [
+            _norm01(float(f.get("max_depth", 0)), norm.max_depth),
+            _norm01(float(f.get("critical_path_len", 0)), norm.max_depth),
+            _norm01(float(f.get("width", 0)), norm.width),
+            min(1.0, float(f.get("edge_density", 0)) * 4.0),
+            min(1.0, float(f.get("parallel_ratio", 0))),
+            _norm01(float(f.get("n_merge_nodes", 0)), max(2.0, norm.n_nodes / 2)),
+        ]
+    )
+    compositional = _avg_terms(
+        [
+            min(1.0, float(f.get("compositional_relation_fraction", 0))),
+            min(1.0, float(f.get("dependent_hop_fraction", 0))),
+            min(1.0, float(f.get("temporal_relation_fraction", 0))),
+            min(1.0, float(f.get("comparison_relation_fraction", 0))),
+            min(1.0, float(f.get("relation_diversity", 0))),
+            _norm01(float(f.get("n_nodes", 0)), norm.n_nodes),
+        ]
+    )
+    retrieval = _avg_terms(
+        [
+            min(1.0, float(f.get("retrieve_step_fraction", 0))),
+            min(1.0, float(f.get("scoped_retrieve_fraction", 0))),
+            min(1.0, float(f.get("critical_retrieve_fraction", 0))),
+            _norm01(float(f.get("avg_search_query_tokens", 0)), norm.avg_search_query_tokens),
+            1.0 - min(1.0, float(f.get("weak_search_query_fraction", 0))),
+            float(f.get("has_web", 0)),
+        ]
+    )
+    execution = _avg_terms(
+        [
+            min(1.0, float(f.get("execution_external_fraction", 0))),
+            min(1.0, float(f.get("execution_tool_diversity", 0))),
+            float(f.get("has_file", 0)),
+            float(f.get("has_code", 0)),
+            _norm01(float(f.get("n_tool_nodes", 0)), norm.n_tool_nodes),
+            min(1.0, float(f.get("tool_fraction", 0))),
+        ]
+    )
+    coordination = _avg_terms(
+        [
+            min(1.0, float(f.get("tool_switching", 0))),
+            min(1.0, float(f.get("cross_tool_dep_fraction", 0))),
+            min(1.0, float(f.get("parallel_ratio", 0)) * float(f.get("tool_fraction", 0))),
+            _norm01(float(f.get("critical_path_tool_steps", 0)), norm.critical_path_tool_steps),
+            min(1.0, float(f.get("n_unique_tools", 0)) / max(float(f.get("n_nodes", 1)), 1.0)),
+        ]
+    )
+    verification = _avg_terms(
+        [
+            min(1.0, float(f.get("verify_fraction", 0))),
+            min(1.0, float(f.get("granularity_diversity", 0))),
+            float(f.get("sink_intermediate_risk", 0)),
+        ]
+    )
+    uncertainty = _avg_terms(
+        [
+            1.0 - float(f.get("plan_trust", 1.0)),
+            _norm01(float(f.get("n_repair_ops", 0)), norm.n_repair_ops),
+            min(1.0, float(f.get("weak_search_query_fraction", 0))),
+            float(f.get("heavily_repaired", 0)),
+        ]
+    )
+    return {
+        "dim7_structural": structural,
+        "dim7_compositional": compositional,
+        "dim7_retrieval": retrieval,
+        "dim7_execution": execution,
+        "dim7_coordination": coordination,
+        "dim7_verification": verification,
+        "dim7_uncertainty": uncertainty,
+    }
+
+
 def _conceptual_dims(f: dict[str, Any], norm: TrainNorm) -> dict[str, float]:
-    """C(Q): topology + plan semantics (relation_type, granularity, search_query)."""
+    """C(Q) v1.1: topology + plan semantics (relation_type, granularity, search_query)."""
     structural = (
         _norm01(float(f.get("max_depth", 0)), norm.max_depth)
         + _norm01(float(f.get("critical_path_len", 0)), norm.max_depth)

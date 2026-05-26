@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#546e7a"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="620" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="450" y="36" text-anchor="middle" font-size="20" font-weight="700" fill="#212121">QCE + Agent Router</text>
+  <text x="450" y="58" text-anchor="middle" font-size="12" fill="#757575">How a query becomes a feature vector, then an agent choice</text>
+
+  <!-- ========== PHASE 1 ========== -->
+  <rect x="40" y="78" width="820" height="168" rx="10" fill="#f5f5f5" stroke="#e0e0e0"/>
+  <text x="56" y="100" font-size="13" font-weight="700" fill="#37474f">Phase 1 — Build features for each query (QCE)</text>
+  <text x="56" y="118" font-size="11" fill="#757575">Runs once per query (cached). Output: one row in complexity_record + query_embeddings parquets.</text>
+
+  <!-- Step boxes phase 1 -->
+  <g id="p1-flow">
+    <rect x="56" y="132" width="100" height="52" rx="8" fill="#e8f5e9" stroke="#66bb6a" stroke-width="1.5"/>
+    <text x="106" y="154" text-anchor="middle" font-size="11" font-weight="600" fill="#2e7d32">1. Query</text>
+    <text x="106" y="170" text-anchor="middle" font-size="9" fill="#558b2f">text + dataset</text>
+
+    <line x1="156" y1="158" x2="178" y2="158" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="178" y="132" width="120" height="52" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="1.5"/>
+    <text x="238" y="152" text-anchor="middle" font-size="11" font-weight="600" fill="#37474f">2. Decompose</text>
+    <text x="238" y="168" text-anchor="middle" font-size="9" fill="#757575">LLM plan JSONL</text>
+
+    <line x1="298" y1="158" x2="320" y2="158" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="320" y="132" width="120" height="52" rx="8" fill="#e3f2fd" stroke="#42a5f5" stroke-width="1.5"/>
+    <text x="380" y="152" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">3. Procedure DAG</text>
+    <text x="380" y="168" text-anchor="middle" font-size="9" fill="#1976d2">subtasks + deps</text>
+
+    <line x1="440" y1="158" x2="462" y2="158" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="462" y="132" width="110" height="52" rx="8" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+    <text x="517" y="152" text-anchor="middle" font-size="11" font-weight="600" fill="#0d47a1">4. C(Q)</text>
+    <text x="517" y="168" text-anchor="middle" font-size="9" fill="#1565c0">5 dim_* values</text>
+
+    <!-- Parallel branch: embedding -->
+    <line x1="106" y1="184" x2="106" y2="210" stroke="#546e7a" stroke-width="1.5"/>
+    <line x1="106" y1="210" x2="517" y2="210" stroke="#546e7a" stroke-width="1.5"/>
+    <line x1="517" y1="210" x2="517" y2="184" stroke="#546e7a" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <rect x="56" y="218" width="120" height="44" rx="8" fill="#e8f5e9" stroke="#43a047" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="116" y="238" text-anchor="middle" font-size="10" font-weight="600" fill="#2e7d32">Query encoder</text>
+    <text x="116" y="252" text-anchor="middle" font-size="9" fill="#558b2f">PCA-16 emb_*</text>
+
+    <line x1="176" y1="240" x2="462" y2="240" stroke="#546e7a" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+
+    <rect x="600" y="132" width="140" height="96" rx="8" fill="#fffde7" stroke="#fbc02d" stroke-width="2"/>
+    <text x="670" y="156" text-anchor="middle" font-size="11" font-weight="700" fill="#f57f17">Feature row</text>
+    <text x="670" y="176" text-anchor="middle" font-size="9" fill="#795548">dim_* + emb_* + dataset</text>
+    <line x1="572" y1="158" x2="600" y2="158" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="572" y1="200" x2="600" y2="200" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- ========== PHASE 2 ========== -->
+  <rect x="40" y="262" width="820" height="148" rx="10" fill="#f5f5f5" stroke="#e0e0e0"/>
+  <text x="56" y="284" font-size="13" font-weight="700" fill="#37474f">Phase 2 — Train router (offline)</text>
+  <text x="56" y="302" font-size="11" fill="#757575">Many labeled queries. Label = which agent answered correctly (oracle_agent).</text>
+
+  <rect x="56" y="318" width="140" height="72" rx="8" fill="#fffde7" stroke="#fbc02d" stroke-width="1.5"/>
+  <text x="126" y="342" text-anchor="middle" font-size="11" font-weight="600" fill="#f57f17">Feature rows</text>
+  <text x="126" y="358" text-anchor="middle" font-size="9" fill="#795548">train / val splits</text>
+  <text x="126" y="374" text-anchor="middle" font-size="9" fill="#795548">+ oracle_agent</text>
+
+  <line x1="196" y1="354" x2="228" y2="354" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="228" y="318" width="160" height="72" rx="8" fill="#ede7f6" stroke="#7e57c2" stroke-width="1.5"/>
+  <text x="308" y="344" text-anchor="middle" font-size="11" font-weight="600" fill="#4527a0">HistGradientBoosting</text>
+  <text x="308" y="362" text-anchor="middle" font-size="9" fill="#5e35b1">4-class classifier</text>
+  <text x="308" y="378" text-anchor="middle" font-size="9" fill="#5e35b1">graph_emb features</text>
+
+  <line x1="388" y1="354" x2="420" y2="354" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="420" y="318" width="180" height="72" rx="8" fill="#fff" stroke="#5c6bc0" stroke-width="2"/>
+  <text x="510" y="342" text-anchor="middle" font-size="11" font-weight="600" fill="#283593">Saved model</text>
+  <text x="510" y="360" text-anchor="middle" font-size="9" fill="#3949ab">hgbm_graph_emb_balanced</text>
+  <text x="510" y="376" text-anchor="middle" font-size="9" fill="#3949ab">.joblib</text>
+
+  <!-- What model outputs -->
+  <rect x="640" y="318" width="200" height="72" rx="8" fill="#fff3e0" stroke="#ff9800" stroke-width="1.5"/>
+  <text x="740" y="340" text-anchor="middle" font-size="10" font-weight="600" fill="#e65100">Learns to output probabilities:</text>
+  <text x="740" y="358" text-anchor="middle" font-size="9" fill="#ef6c00">p_raw  p_cot  p_react  p_multiagent</text>
+  <text x="740" y="376" text-anchor="middle" font-size="9" fill="#757575">sum to 1.0 per query</text>
+
+  <line x1="600" y1="354" x2="640" y2="354" stroke="#546e7a" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+  <!-- ========== PHASE 3 ========== -->
+  <rect x="40" y="426" width="820" height="168" rx="10" fill="#f5f5f5" stroke="#e0e0e0"/>
+  <text x="56" y="448" font-size="13" font-weight="700" fill="#37474f">Phase 3 — Inference at runtime (orchestrator)</text>
+  <text x="56" y="466" font-size="11" fill="#757575">One new query. Same Phase 1 features, then route and optionally execute.</text>
+
+  <rect x="56" y="482" width="88" height="48" rx="8" fill="#e8f5e9" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="100" y="504" text-anchor="middle" font-size="10" font-weight="600" fill="#2e7d32">New query</text>
+  <text x="100" y="518" text-anchor="middle" font-size="9" fill="#558b2f">e.g. GAIA</text>
+
+  <line x1="144" y1="506" x2="166" y2="506" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="166" y="482" width="100" height="48" rx="8" fill="#fffde7" stroke="#fbc02d" stroke-width="1.5"/>
+  <text x="216" y="502" text-anchor="middle" font-size="10" font-weight="600" fill="#f57f17">QCE features</text>
+  <text x="216" y="518" text-anchor="middle" font-size="9" fill="#795548">Phase 1 again</text>
+
+  <line x1="266" y1="506" x2="288" y2="506" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="288" y="482" width="100" height="48" rx="8" fill="#ede7f6" stroke="#7e57c2" stroke-width="1.5"/>
+  <text x="338" y="502" text-anchor="middle" font-size="10" font-weight="600" fill="#4527a0">Router</text>
+  <text x="338" y="518" text-anchor="middle" font-size="9" fill="#5e35b1">argmax p(a)</text>
+
+  <line x1="388" y1="506" x2="410" y2="506" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="410" y="482" width="100" height="48" rx="8" fill="#ffe0b2" stroke="#fb8c00" stroke-width="2"/>
+  <text x="460" y="502" text-anchor="middle" font-size="10" font-weight="600" fill="#e65100">One agent</text>
+  <text x="460" y="518" text-anchor="middle" font-size="9" fill="#ef6c00">react / cot / ...</text>
+
+  <line x1="510" y1="506" x2="532" y2="506" stroke="#546e7a" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="532" y="482" width="88" height="48" rx="8" fill="#fff" stroke="#90a4ae" stroke-width="1.5"/>
+  <text x="576" y="504" text-anchor="middle" font-size="10" font-weight="600" fill="#37474f">Answer</text>
+  <text x="576" y="518" text-anchor="middle" font-size="9" fill="#757575">+ grade</text>
+
+  <!-- Decision callout -->
+  <rect x="640" y="482" width="200" height="88" rx="8" fill="#ffffff" stroke="#b0bec5" stroke-width="1"/>
+  <text x="740" y="504" text-anchor="middle" font-size="10" font-weight="600" fill="#37474f">Example decision</text>
+  <text x="740" y="522" text-anchor="middle" font-size="9" fill="#546e7a">p_react = 0.62 (highest)</text>
+  <text x="740" y="538" text-anchor="middle" font-size="9" fill="#546e7a">-&gt; run ReAct agent</text>
+  <text x="740" y="558" text-anchor="middle" font-size="8" fill="#90a4ae">optional: cascade if fail</text>
+
+  <!-- Big vertical connectors between phases -->
+  <line x1="450" y1="246" x2="450" y2="262" stroke="#90a4ae" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="450" y1="410" x2="450" y2="426" stroke="#90a4ae" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Footer: modules -->
+  <text x="450" y="608" text-anchor="middle" font-size="10" fill="#9e9e9e">
+    Code: qce/decompose.py, qce/graph.py, qce/complexity.py | routing/router.py | orchestrator/pipeline.py
+  </text>
+</svg>

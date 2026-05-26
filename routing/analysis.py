@@ -12,17 +12,19 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import f1_score
 
-from routing.train_router import (
+from routing.router import (
     AGENTS,
     PROBA_COLS,
     REPO_ROOT,
+    ROUTER_MODEL_PATH,
     TARGET,
+    attach_router_predictions,
     load_router,
     load_split,
-    predict_agent_proba,
 )
+
 DEFAULT_ORACLE = REPO_ROOT / "datasets/train_samples/v1/oracle_results1.csv"
-DEFAULT_ROUTER = REPO_ROOT / "models/router/G3_hgbm_graph_emb_balanced.joblib"
+DEFAULT_ROUTER = ROUTER_MODEL_PATH
 
 AGENT_TIER: dict[str, int] = {"raw": 0, "cot": 1, "react": 2, "multiagent": 3}
 AGENT_COLORS: dict[str, str] = {
@@ -81,30 +83,6 @@ def oracle_outcome_matrix(
         rows.append(row)
     out = pd.DataFrame(rows)
     return out.set_index("training_id")
-
-
-def attach_router_predictions(
-    df: pd.DataFrame,
-    pipe: Any,
-    feature_cols: list[str],
-    *,
-    experiment_id: str = "router",
-) -> pd.DataFrame:
-    """Add ``router_pred``, ``max_prob``, ``margin_top2``, proba columns from a fitted pipe."""
-    proba = predict_agent_proba(pipe, df, feature_cols)
-    out = df.copy()
-    for c in proba.columns:
-        out[c] = proba[c].values
-    agents = list(AGENTS)
-    p = out[PROBA_COLS].to_numpy()
-    order = np.argsort(-p, axis=1)
-    out["router_pred"] = [agents[i] for i in order[:, 0]]
-    out["max_prob"] = p[np.arange(len(p)), order[:, 0]]
-    out["second_prob"] = p[np.arange(len(p)), order[:, 1]]
-    out["margin_top2"] = out["max_prob"] - out["second_prob"]
-    out["router_second"] = [agents[i] for i in order[:, 1]]
-    out["router_experiment"] = experiment_id
-    return out
 
 
 def attach_router(
@@ -323,6 +301,146 @@ def oracle_macro_f1(df: pd.DataFrame, pred_col: str) -> float:
     return float(
         f1_score(y, pred, average="macro", labels=list(AGENTS), zero_division=0)
     )
+
+
+def _feature_group(name: str) -> str:
+    if name == "dataset":
+        return "dataset"
+    if name.startswith("dim_"):
+        return "graph_cq"
+    if name.startswith("emb_"):
+        return "embedding"
+    return "other"
+
+
+def complexity_region_table(
+    df: pd.DataFrame,
+    *,
+    complexity_col: str = "complexity_graph",
+    n_bins: int = 4,
+) -> pd.DataFrame:
+    """
+    Per complexity bin: dominant oracle agent, router behavior, execution accuracy.
+
+    Core interpretability table for the paper (adaptive allocation by region).
+    """
+    work = df.dropna(subset=[complexity_col, TARGET]).copy()
+    if work.empty:
+        return pd.DataFrame()
+    work["region"] = pd.qcut(
+        work[complexity_col],
+        q=min(n_bins, work[complexity_col].nunique()),
+        duplicates="drop",
+    )
+    rows: list[dict[str, Any]] = []
+    for region, grp in work.groupby("region", observed=True):
+        oracle_pct = grp[TARGET].value_counts(normalize=True)
+        row: dict[str, Any] = {
+            "region": str(region),
+            "n": len(grp),
+            f"{complexity_col}_median": float(grp[complexity_col].median()),
+            "dominant_oracle": oracle_pct.idxmax(),
+            "oracle_mode_pct": float(oracle_pct.max()),
+        }
+        for a in AGENTS:
+            row[f"oracle_pct_{a}"] = round(float(oracle_pct.get(a, 0.0)), 4)
+        if "router_pred" in grp.columns:
+            router_pct = grp["router_pred"].value_counts(normalize=True)
+            row["dominant_router"] = router_pct.idxmax()
+            for a in AGENTS:
+                row[f"router_pct_{a}"] = round(float(router_pct.get(a, 0.0)), 4)
+        if "exec_correct" in grp.columns:
+            row["router_exec_accuracy"] = round(float(grp["exec_correct"].mean()), 4)
+        if "exec_cost_usd" in grp.columns:
+            row["mean_exec_cost_usd"] = round(float(grp["exec_cost_usd"].mean()), 6)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _macro_f1_scorer(estimator: Any, X: pd.DataFrame, y: np.ndarray) -> float:
+    """Callable scorer for permutation_importance (string agent labels)."""
+    pred = estimator.predict(X)
+    return float(
+        f1_score(
+            y,
+            pred,
+            average="macro",
+            labels=list(AGENTS),
+            zero_division=0,
+        )
+    )
+
+
+def permutation_importance_table(
+    pipe: Any,
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    *,
+    n_repeats: int = 10,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Sklearn permutation importance (macro-F1) on a routed analysis frame."""
+    from sklearn.inspection import permutation_importance
+
+    result = permutation_importance(
+        pipe,
+        df[feature_cols],
+        df[TARGET].astype(str).to_numpy(),
+        n_repeats=n_repeats,
+        random_state=random_state,
+        n_jobs=-1,
+        scoring=_macro_f1_scorer,
+    )
+    out = pd.DataFrame(
+        {
+            "feature": feature_cols,
+            "importance_mean": result.importances_mean,
+            "importance_std": result.importances_std,
+        }
+    ).sort_values("importance_mean", ascending=False)
+    out["group"] = out["feature"].map(_feature_group)
+    return out
+
+
+def feature_group_importance_summary(imp: pd.DataFrame) -> pd.DataFrame:
+    return (
+        imp.groupby("group", as_index=False)
+        .agg(importance_sum=("importance_mean", "sum"), n_features=("feature", "count"))
+        .sort_values("importance_sum", ascending=False)
+    )
+
+
+def run_feature_importance(
+    split: str,
+    *,
+    router_path: Path = DEFAULT_ROUTER,
+    oracle_path: Path = DEFAULT_ORACLE,
+    out_dir: Path,
+    n_repeats: int = 10,
+) -> dict[str, Any]:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    df = build_analysis_frame(split, router_path=router_path, oracle_path=oracle_path)
+    obj = load_router(router_path)
+    imp = permutation_importance_table(
+        obj["pipeline"], df, list(obj["feature_cols"]), n_repeats=n_repeats
+    )
+    grp = feature_group_importance_summary(imp)
+    imp.to_csv(out_dir / f"permutation_importance_{split}.csv", index=False)
+    grp.to_csv(out_dir / f"importance_by_group_{split}.csv", index=False)
+    summary = {
+        "split": split,
+        "router": str(router_path),
+        "n": len(df),
+        "top_features": imp.head(12)[["feature", "importance_mean", "group"]].to_dict(
+            orient="records"
+        ),
+        "group_importance": grp.to_dict(orient="records"),
+    }
+    (out_dir / f"importance_summary_{split}.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+    return summary
 
 
 # ── Plots ─────────────────────────────────────────────────────────────────────
@@ -619,6 +737,9 @@ def run_full_analysis(
 
     plot_complexity_region(df, out_dir / "complexity_region_oracle.png", title_suffix=suffix)
     plot_router_on_complexity(df, out_dir / "complexity_region_router_vs_oracle.png", title_suffix=suffix)
+    region_tbl = complexity_region_table(df)
+    if len(region_tbl):
+        region_tbl.to_csv(out_dir / "complexity_region_table.csv", index=False)
     cal = plot_reliability_calibration(df, out_dir / "reliability_calibration.png", title_suffix=suffix)
 
     baselines = baseline_strategies(df)
@@ -641,6 +762,7 @@ def run_full_analysis(
         "calibration": cal,
         "baselines": [p.__dict__ for p in baselines],
         "best_top2": top2_best,
+        "complexity_regions": region_tbl.to_dict(orient="records") if len(region_tbl) else [],
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     conf_curve.to_csv(out_dir / "confidence_threshold_sweep.csv", index=False)
@@ -661,3 +783,54 @@ def run_full_analysis(
     ].to_csv(out_dir / "per_question.csv", index=False)
 
     return summary
+
+
+def main_analyze(argv: list[str] | None = None) -> None:
+    import argparse
+
+    p = argparse.ArgumentParser(description="Router paper analyses and figures.")
+    p.add_argument("--split", choices=("val", "test", "both"), default="both")
+    p.add_argument("--router", type=Path, default=DEFAULT_ROUTER)
+    p.add_argument("--oracle", type=Path, default=DEFAULT_ORACLE)
+    p.add_argument("--out-dir", type=Path, default=None)
+    p.add_argument("--no-embeddings", action="store_true")
+    p.add_argument(
+        "--importance",
+        action="store_true",
+        help="Also run permutation feature importance for each split.",
+    )
+    p.add_argument("--importance-repeats", type=int, default=10)
+    args = p.parse_args(argv)
+    splits = ["val", "test"] if args.split == "both" else [args.split]
+    root = args.out_dir or (REPO_ROOT / "results/router_analysis")
+    all_summaries: dict[str, dict] = {}
+    for split in splits:
+        out = root / split
+        print(f"\n=== Analyzing {split!r} → {out} ===")
+        summary = run_full_analysis(
+            split,
+            out_dir=out,
+            router_path=args.router,
+            oracle_path=args.oracle,
+            with_embeddings=not args.no_embeddings,
+        )
+        all_summaries[split] = summary
+        print(json.dumps(summary, indent=2))
+        if args.importance:
+            imp_dir = out / "importance"
+            imp_sum = run_feature_importance(
+                split,
+                router_path=args.router,
+                oracle_path=args.oracle,
+                out_dir=imp_dir,
+                n_repeats=args.importance_repeats,
+            )
+            print(json.dumps(imp_sum, indent=2))
+    if len(all_summaries) > 1:
+        combined = root / "summary_all_splits.json"
+        combined.write_text(json.dumps(all_summaries, indent=2), encoding="utf-8")
+        print(f"\nCombined summary: {combined}")
+
+
+if __name__ == "__main__":
+    main_analyze()

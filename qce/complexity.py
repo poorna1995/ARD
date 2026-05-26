@@ -20,6 +20,8 @@ import pandas as pd
 
 from qce.decompose import load_plans_jsonl
 from qce.graph import (
+    C_VECTOR_VER_V2,
+    DIM7_COLS,
     DIM_COLS,
     GraphBuildResult,
     TrainNorm,
@@ -39,11 +41,13 @@ _OUTPUT_COLS = (
     "training_id",
     "dataset",
     "c_vector_ver",
+    "c_vector_ver_v2",
     "final_constraint",
     "graph_status",
     "terminal_sink_ok",
     "sink_intermediate_risk",
     *C_VECTOR_COLS,
+    *DIM7_COLS,
     SCALAR_COL,
     "plan_trust",
     "verify_fraction",
@@ -131,7 +135,15 @@ def complexity_dataframe(
     full = rescore_dataframe(features_dataframe(build_graphs_from_plans(plans)), norm)
     out = full[[c for c in _OUTPUT_COLS if c in full.columns]].copy()
     out["c_vector_ver"] = C_VECTOR_VER
+    out["c_vector_ver_v2"] = C_VECTOR_VER_V2
     return out
+
+
+def c_vector_v7(features: dict[str, Any]) -> np.ndarray:
+    missing = [c for c in DIM7_COLS if c not in features]
+    if missing:
+        raise KeyError(f"C(Q) v2 missing keys {missing}")
+    return np.asarray([float(features[c]) for c in DIM7_COLS], dtype=np.float64)
 
 
 def complexity_splits(
@@ -167,6 +179,10 @@ def router_scalar_vector(df: pd.DataFrame) -> np.ndarray:
     if SCALAR_COL not in df.columns:
         raise KeyError(f"dataframe missing {SCALAR_COL!r}")
     return df[[SCALAR_COL]].to_numpy(dtype=np.float64)
+
+
+def router_feature_cols_v7() -> tuple[str, ...]:
+    return DIM7_COLS
 
 
 def router_feature_cols() -> tuple[str, ...]:
@@ -271,5 +287,14 @@ if __name__ == "__main__":
         )
     write_complexity_parquet(df, args.out)
     print(f"wrote {len(df)} rows → {args.out.resolve()}")
-    print(f"terminal_sink_ok rate: {df['terminal_sink_ok'].mean():.3f}")
-    print(df[list(C_VECTOR_COLS)].describe().round(3))
+    if len(df) == 0:
+        raise SystemExit("no plans loaded — check --plans path (not a placeholder like <gaia_plans>)")
+    if "terminal_sink_ok" in df.columns:
+        print(f"terminal_sink_ok rate: {df['terminal_sink_ok'].mean():.3f}")
+    v1 = [c for c in C_VECTOR_COLS if c in df.columns]
+    if v1:
+        print(df[v1].describe().round(3))
+    v2 = [c for c in DIM7_COLS if c in df.columns]
+    if v2:
+        print("dim7 (v2):")
+        print(df[v2].describe().round(3))
