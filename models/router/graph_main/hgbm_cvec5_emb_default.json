@@ -1,0 +1,33 @@
+{
+  "experiment_id": "hgbm_cvec5_emb_default",
+  "n_features": 21,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty",
+    "emb_0",
+    "emb_1",
+    "emb_2",
+    "emb_3",
+    "emb_4",
+    "emb_5",
+    "emb_6",
+    "emb_7",
+    "emb_8",
+    "emb_9",
+    "emb_10",
+    "emb_11",
+    "emb_12",
+    "emb_13",
+    "emb_14",
+    "emb_15"
+  ],
+  "val_macro_f1": 0.5499147999147999,
+  "train_cv_macro_f1": 0.43671661046210575,
+  "feature_set": "cvec5_emb",
+  "hgbm_params": "default",
+  "router_role": "legacy",
+  "production": false
+}

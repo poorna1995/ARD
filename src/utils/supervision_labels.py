@@ -1,25 +1,9 @@
-"""Build per-query supervision targets for routing from multi-agent benchmark runs.
+"""Build long-form strategy outcome tables from multi-agent benchmark checkpoints.
 
-Concept
--------
-The README pipeline calls for a *golden routing label* per query: which agent
-strategy to use, together with cost and latency signals. After
-``run_training_benchmark.py`` checkpoints each question with one or more
-strategies, this module turns those executions into **one row per query** with:
-
-- ``supervision_target_strategy`` — among strategies that answered *correctly*,
-  the one with lowest estimated dollar cost, then lowest latency (tie-broken by
-  a fixed strategy order so labels are deterministic).
-- ``supervision_target_cost_usd`` / ``supervision_target_latency_s`` — from the
-  chosen run's ``AgentResponse`` (latency falls back to per-run ``wall_clock``).
-
-If no strategy is correct, the target strategy is empty and
-``supervision_label_valid`` is False (still useful for filtering or contrastive
-training).
-
-Inputs can be checkpoint JSONL records (as produced by ``load_jsonl`` in
-``scripts/run_training_benchmark.py``) or a flattened runs table
-(``results_runs.parquet`` / ``results.parquet``).
+Per-query routing labels (``oracle_agent``, soft ``p_*``) are defined in
+``src.utils.soft_labels`` via utility argmax ``Perf - λ·Cost`` on
+``oracle_results*.csv``. This module only expands checkpoint JSONL into a
+long-form matrix (one row per ``training_id`` × strategy) for oracle export.
 """
 
 from __future__ import annotations
@@ -30,16 +14,6 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-# Prefer cheaper / simpler agents when cost and latency tie exactly.
-DEFAULT_STRATEGY_TIEBREAK: tuple[str, ...] = (
-    "raw",
-    "cot",
-    "self_consistency",
-    "debate",
-    "react",
-    "multiagent",
-)
-
 # Long-form matrix: one row per (training_id, strategy) for oracle / routing analysis.
 STRATEGY_OUTCOME_COLUMNS: tuple[str, ...] = (
     "training_id",
@@ -49,13 +23,6 @@ STRATEGY_OUTCOME_COLUMNS: tuple[str, ...] = (
     "predicted_answer",
     "is_correct",
 )
-
-
-def _tiebreak_index(strategy: str, order: tuple[str, ...]) -> int:
-    try:
-        return order.index(strategy)
-    except ValueError:
-        return len(order)
 
 
 def _iter_strategy_run_rows(
@@ -166,105 +133,6 @@ def build_strategy_outcome_matrix_from_runs_df(runs: pd.DataFrame) -> pd.DataFra
     return out[list(STRATEGY_OUTCOME_COLUMNS)]
 
 
-def build_supervision_labels_from_runs_df(
-    runs: pd.DataFrame,
-    *,
-    strategy_tiebreak: tuple[str, ...] = DEFAULT_STRATEGY_TIEBREAK,
-) -> pd.DataFrame:
-    """
-    One row per ``training_id`` with routing supervision fields.
-
-    Expects columns at minimum:
-    ``training_id``, ``strategy``, ``is_correct``, ``is_failed`` (optional),
-    ``cost_usd``, ``latency_s`` (or ``latency_total`` + ``wall_clock``).
-    """
-    if runs.empty:
-        return pd.DataFrame()
-
-    df = runs.copy()
-    if "is_failed" not in df.columns:
-        df["is_failed"] = False
-    for col in ("is_correct", "is_failed"):
-        df[col] = df[col].fillna(False).astype(bool)
-
-    if "latency_s" not in df.columns:
-        lt = pd.to_numeric(df.get("latency_total"), errors="coerce").fillna(0.0)
-        wc = pd.to_numeric(df.get("wall_clock"), errors="coerce").fillna(0.0)
-        df["latency_s"] = lt.where(lt > 0, wc)
-
-    df["cost_usd"] = pd.to_numeric(df["cost_usd"], errors="coerce").fillna(0.0)
-
-    per_strategy: list[pd.Series] = []
-    for _key, g in df.groupby(["training_id", "strategy"], sort=False):
-        per_strategy.append(_pick_best_run_in_strategy(g))
-    ps = pd.DataFrame(per_strategy).reset_index(drop=True)
-
-    ps["_order"] = ps["strategy"].map(lambda s: _tiebreak_index(s, strategy_tiebreak))
-
-    out_rows: list[dict[str, Any]] = []
-    for tid, g in ps.groupby("training_id", sort=False):
-        row0 = g.iloc[0]
-        base = {
-            "training_id": tid,
-            "dataset_source": row0.get("dataset_source"),
-            "prompt_dataset": row0.get("prompt_dataset"),
-            "query": row0.get("query"),
-            "reference": row0.get("reference"),
-            "model": row0.get("model"),
-            "n_strategies": int(len(g)),
-        }
-
-        correct = g[g["is_correct"] & ~g["is_failed"]]
-        n_correct = int(correct["strategy"].nunique()) if not correct.empty else 0
-        base["n_correct_strategies"] = n_correct
-        base["supervision_label_valid"] = n_correct > 0
-
-        if correct.empty:
-            base["supervision_target_strategy"] = ""
-            base["supervision_target_cost_usd"] = float("nan")
-            base["supervision_target_latency_s"] = float("nan")
-        else:
-            c = correct.sort_values(
-                by=["cost_usd", "latency_s", "_order"],
-                ascending=[True, True, True],
-            )
-            pick = c.iloc[0]
-            base["supervision_target_strategy"] = str(pick["strategy"])
-            base["supervision_target_cost_usd"] = float(pick["cost_usd"])
-            base["supervision_target_latency_s"] = float(pick["latency_s"])
-
-        cost = base["supervision_target_cost_usd"]
-        lat = base["supervision_target_latency_s"]
-        strat = base["supervision_target_strategy"] or None
-        base["supervision_target_json"] = json.dumps(
-            {
-                "strategy": strat,
-                "cost_usd": None if cost != cost else float(cost),  # NaN → null
-                "latency_s": None if lat != lat else float(lat),
-                "valid": base["supervision_label_valid"],
-            },
-            ensure_ascii=False,
-        )
-
-        out_rows.append(base)
-
-    return pd.DataFrame(out_rows)
-
-
-def build_supervision_labels_from_checkpoint_records(
-    records: list[dict[str, Any]],
-    *,
-    strategy_tiebreak: tuple[str, ...] = DEFAULT_STRATEGY_TIEBREAK,
-) -> pd.DataFrame:
-    rows = _iter_strategy_run_rows(records)
-    if not rows:
-        return pd.DataFrame()
-    return build_supervision_labels_from_runs_df(
-        pd.DataFrame(rows),
-        strategy_tiebreak=strategy_tiebreak,
-    )
-
-
 def load_checkpoint_jsonl(path: str | Path) -> list[dict[str, Any]]:
     """Load JSONL checkpoint; keep last record per ``training_id`` (resume-safe)."""
     path = Path(path)
@@ -317,18 +185,4 @@ def find_repo_root(*, start: Path | None = None) -> Path:
 def default_checkpoint_path(repo: Path | None = None) -> Path:
     root = repo or repo_root()
     return root / "logs/benchmark_runs/combined/checkpoint.jsonl"
-
-
-def load_supervision_labels(
-    checkpoint: str | Path | None = None,
-    *,
-    strategy_tiebreak: tuple[str, ...] = DEFAULT_STRATEGY_TIEBREAK,
-) -> pd.DataFrame:
-    """Load checkpoint JSONL and return one supervision row per ``training_id``."""
-    path = Path(checkpoint) if checkpoint is not None else default_checkpoint_path()
-    records = load_checkpoint_jsonl(path)
-    return build_supervision_labels_from_checkpoint_records(
-        records,
-        strategy_tiebreak=strategy_tiebreak,
-    )
 

@@ -21,6 +21,7 @@ import pandas as pd
 from qce.decompose import load_plans_jsonl
 from qce.graph import (
     C_VECTOR_VER_V2,
+    DIM5_LEGACY_COLS,
     DIM7_COLS,
     DIM_COLS,
     GraphBuildResult,
@@ -32,10 +33,18 @@ from qce.graph import (
     rescore_dataframe,
 )
 
-C_VECTOR_VER = "c-vector-v1.1"
+C_VECTOR_VER = "c-vector-v3.0-main"
 C_VECTOR_COLS: tuple[str, ...] = DIM_COLS
 SCALAR_COL = "complexity_graph"
 ROUTER_MAIN_FEATURE_SET = "cvec"
+
+# Plan-reliability scalars (exported in complexity parquet; optional router add-on).
+TRUST_SCALAR_COLS: tuple[str, ...] = (
+    "plan_trust",
+    "verify_fraction",
+    "terminal_sink_ok",
+    "sink_intermediate_risk",
+)
 
 _OUTPUT_COLS = (
     "training_id",
@@ -47,6 +56,7 @@ _OUTPUT_COLS = (
     "terminal_sink_ok",
     "sink_intermediate_risk",
     *C_VECTOR_COLS,
+    *DIM5_LEGACY_COLS,
     *DIM7_COLS,
     SCALAR_COL,
     "plan_trust",

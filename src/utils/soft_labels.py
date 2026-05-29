@@ -15,6 +15,10 @@ Usage::
     uv run python src/utils/soft_labels.py --update-qce-splits --auto-temperature
     uv run python src/utils/soft_labels.py --update-qce-splits \\
         --temperature-map math:50,hotpot:100,musique:100
+    uv run python -m src.utils.soft_labels --regenerate-oracle-agent --update-qce-splits
+    uv run python -m src.utils.soft_labels --append-missing-solvable --with-qce-features
+    uv run python scripts/describe_qce_split_filter.py --append-missing-solvable --with-qce-features
+    # oracle_agent / y: utility cost-aware label, U = perf - DEFAULT_UTILITY_LAMBDA (25) * cost_usd
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ DEFAULT_AGENTS: tuple[str, ...] = (
     "react",
     "multiagent",
 )
+DEFAULT_UTILITY_TIEBREAK: tuple[str, ...] = DEFAULT_AGENTS
 
 ORACLE_AGENT_COL = "agent"
 SOFT_COL_PREFIX = "p_"
@@ -46,6 +51,12 @@ V1_SPLITS: tuple[str, ...] = (
     "qce_val.csv",
     "qce_internal_test.csv",
 )
+POOL_LABELS_NAME = "train_labels1.csv"
+SPLIT_KEYS: tuple[str, ...] = ("train", "val", "test")
+
+# Utility λ for ``oracle_agent`` / ``y`` (cost-aware oracle): argmax_s (perf - λ * cost_usd).
+# QCE v1 splits were built with λ=25.0 (``--regenerate-oracle-agent --update-qce-splits``).
+DEFAULT_UTILITY_LAMBDA: float = 25.0
 
 # Default λ values for ``--sweep-temperature`` (cost penalty, not LLM temperature).
 DEFAULT_TEMPERATURE_SWEEP: tuple[float, ...] = (
@@ -57,6 +68,13 @@ DEFAULT_TEMPERATURE_SWEEP: tuple[float, ...] = (
     500.0,
     1000.0,
 )
+
+
+def _tiebreak_index(agent: str, order: tuple[str, ...]) -> int:
+    try:
+        return order.index(agent)
+    except ValueError:
+        return len(order)
 
 
 def repo_root() -> Path:
@@ -92,6 +110,111 @@ def load_oracle(path: str | Path, *, agents: tuple[str, ...] = DEFAULT_AGENTS) -
         raise ValueError(f"oracle missing columns: {sorted(missing)}")
     df = df[df[ORACLE_AGENT_COL].isin(agents)].copy()
     return df
+
+
+def regenerate_oracle_agent_labels(
+    labels: pd.DataFrame,
+    oracle: pd.DataFrame,
+    *,
+    utility_lambda: float,
+    agents: tuple[str, ...] = DEFAULT_AGENTS,
+    cost_col: str = "cost_usd",
+    id_col: str = "training_id",
+    dataset_col: str = DATASET_COL,
+    query_col: str = "query",
+    expected_col: str = "expected_answer",
+    agent_col: str = ORACLE_AGENT_COL,
+) -> pd.DataFrame:
+    """
+    Recompute ``oracle_agent`` using strict utility argmax:
+    ``argmax_s(Perf - λ * Cost)`` where ``Perf = is_correct``.
+
+    Project default: ``DEFAULT_UTILITY_LAMBDA`` (25.0) for QCE v1 ``oracle_agent`` / ``y``.
+    """
+    if id_col not in labels.columns:
+        raise ValueError(f"labels missing {id_col!r}")
+    if id_col not in oracle.columns:
+        raise ValueError(f"oracle missing {id_col!r}")
+
+    work = oracle.copy()
+    work = work[work[agent_col].isin(agents)].copy()
+    work["is_correct_num"] = pd.to_numeric(work["is_correct"], errors="coerce").fillna(0.0)
+    work["is_failed_num"] = pd.to_numeric(work["is_failed"], errors="coerce").fillna(0.0)
+    work[cost_col] = pd.to_numeric(work[cost_col], errors="coerce").fillna(0.0)
+    work["latency_sec"] = pd.to_numeric(work.get("latency_sec"), errors="coerce").fillna(0.0)
+    has_answer = work["predicted_answer"].fillna("").astype(str).str.strip().ne("")
+    work["perf"] = (
+        (work["is_correct_num"] > 0) & (work["is_failed_num"] <= 0) & has_answer
+    ).astype(float)
+    work["utility"] = work["perf"] - float(utility_lambda) * work[cost_col]
+    work["_order"] = work[agent_col].map(lambda s: _tiebreak_index(str(s), DEFAULT_UTILITY_TIEBREAK))
+
+    utility_pick = (
+        work.sort_values(
+            by=[id_col, "utility", cost_col, "latency_sec", "_order"],
+            ascending=[True, False, True, True, True],
+            kind="mergesort",
+        )
+        .groupby(id_col, sort=False, as_index=False)
+        .first()
+    )
+
+    n_correct = (
+        work[work["perf"] > 0]
+        .groupby(id_col, sort=False)[agent_col]
+        .nunique()
+        .rename("n_correct_agents")
+        .astype(int)
+    )
+
+    picked = utility_pick.set_index(id_col)
+    out = labels.copy()
+    out["oracle_agent"] = out[id_col].map(picked[agent_col]).astype("object")
+    out["agent_tier"] = out["oracle_agent"].map({a: i for i, a in enumerate(agents)}).astype("Int64")
+    out[cost_col] = out[id_col].map(picked[cost_col]).astype(float)
+    out["latency_sec"] = out[id_col].map(picked["latency_sec"]).astype(float)
+    out["cost_normalized"] = out[id_col].map(picked.get("cost_normalized")).astype(float)
+    out["predicted_answer"] = out[id_col].map(picked["predicted_answer"]).astype("object")
+    out["n_correct_agents"] = out[id_col].map(n_correct).fillna(0).astype(int)
+    out["label_status"] = np.where(out["oracle_agent"].notna(), "labeled", "discarded")
+    out["utility_lambda"] = float(utility_lambda)
+    out[TARGET_COL] = out["oracle_agent"]
+
+    # Fill core columns from oracle when absent in labels.
+    fill_cols = [dataset_col, query_col, expected_col]
+    for col in fill_cols:
+        if col not in out.columns:
+            out[col] = out[id_col].map(picked[col]).astype("object")
+
+    return out
+
+
+def regenerate_oracle_agent_labels_in_files(
+    label_paths: Sequence[str | Path],
+    oracle_path: str | Path,
+    *,
+    utility_lambda: float,
+    agents: tuple[str, ...] = DEFAULT_AGENTS,
+    cost_col: str = "cost_usd",
+    write: bool = True,
+) -> dict[Path, pd.DataFrame]:
+    """Regenerate utility cost-aware oracle labels (``oracle_agent`` + metadata) for each CSV."""
+    oracle = load_oracle(oracle_path, agents=agents)
+    out: dict[Path, pd.DataFrame] = {}
+    for path in label_paths:
+        p = Path(path)
+        labels = pd.read_csv(p)
+        labeled = regenerate_oracle_agent_labels(
+            labels,
+            oracle,
+            utility_lambda=utility_lambda,
+            agents=agents,
+            cost_col=cost_col,
+        )
+        out[p] = labeled
+        if write:
+            labeled.to_csv(p, index=False)
+    return out
 
 
 def _correct_oracle_rows(oracle: pd.DataFrame) -> pd.DataFrame:
@@ -548,6 +671,251 @@ def infer_temperature_map_from_val(
     return recommend_temperature_per_dataset(summary)
 
 
+def v1_split_paths(v1_dir: Path | None = None) -> dict[str, Path]:
+    """Map split key → CSV path under v1/."""
+    root = v1_dir or default_v1_dir()
+    return {
+        "train": root / "qce_train.csv",
+        "val": root / "qce_val.csv",
+        "test": root / "qce_internal_test.csv",
+    }
+
+
+def solvable_ids_missing_from_qce(
+    *,
+    v1_dir: Path | None = None,
+    oracle_path: str | Path | None = None,
+    pool_name: str = POOL_LABELS_NAME,
+) -> list[str]:
+    """``training_id`` values with ≥1 correct agent in oracle but not in any QCE split CSV."""
+    root = v1_dir or default_v1_dir()
+    pool = pd.read_csv(root / pool_name)
+    paths = v1_split_paths(root)
+    qce_ids: set[str] = set()
+    for path in paths.values():
+        qce_ids |= set(pd.read_csv(path)["training_id"].astype(str))
+    oracle = load_oracle(oracle_path or (root / "oracle_results1.csv"))
+    solvable = set(_correct_oracle_rows(oracle).groupby("training_id", sort=False).groups)
+    return sorted(solvable - qce_ids)
+
+
+def allocate_ids_to_splits(
+    training_ids: list[str],
+    *,
+    split_sizes: dict[str, int],
+) -> dict[str, list[str]]:
+    """Assign ids across splits proportional to ``split_sizes`` (largest remainder)."""
+    ids = sorted(training_ids)
+    splits = [s for s in SPLIT_KEYS if s in split_sizes and split_sizes[s] >= 0]
+    if not splits or not ids:
+        return {s: [] for s in splits}
+    total = sum(split_sizes[s] for s in splits) or 1
+    n = len(ids)
+    target = {s: n * split_sizes[s] / total for s in splits}
+    alloc = {s: int(target[s]) for s in splits}
+    remainder = n - sum(alloc.values())
+    for s in sorted(splits, key=lambda s: target[s] - alloc[s], reverse=True)[:remainder]:
+        alloc[s] += 1
+    out: dict[str, list[str]] = {s: [] for s in splits}
+    idx = 0
+    for s in splits:
+        out[s] = ids[idx : idx + alloc[s]]
+        idx += alloc[s]
+    return out
+
+
+def append_missing_solvable_to_v1_splits(
+    *,
+    v1_dir: Path | None = None,
+    oracle_path: str | Path | None = None,
+    pool_name: str = POOL_LABELS_NAME,
+    training_ids: list[str] | None = None,
+    write: bool = True,
+) -> dict[str, list[str]]:
+    """
+    Append solvable pool rows missing from QCE splits (proportional train/val/test).
+
+    Rows are copied from ``train_labels1.csv`` (or ``pool_name``). Call
+    ``apply_soft_labels_to_v1_splits`` afterward (or use ``--append-missing-solvable``).
+    """
+    root = v1_dir or default_v1_dir()
+    oracle_path = Path(oracle_path or (root / "oracle_results1.csv"))
+    missing = training_ids or solvable_ids_missing_from_qce(
+        v1_dir=root, oracle_path=oracle_path, pool_name=pool_name
+    )
+    if not missing:
+        return {k: [] for k in SPLIT_KEYS}
+
+    pool = pd.read_csv(root / pool_name)
+    pool = pool[pool["training_id"].astype(str).isin(missing)].copy()
+    if len(pool) != len(missing):
+        found = set(pool["training_id"])
+        extra = [t for t in missing if t not in found]
+        raise ValueError(f"pool missing training_ids: {extra[:5]}")
+
+    paths = v1_split_paths(root)
+    split_sizes: dict[str, int] = {}
+    for key, path in paths.items():
+        if path.is_file():
+            split_sizes[key] = len(pd.read_csv(path))
+        else:
+            split_sizes[key] = 0
+
+    by_split = allocate_ids_to_splits(missing, split_sizes=split_sizes)
+    added: dict[str, list[str]] = {k: [] for k in SPLIT_KEYS}
+
+    for key, ids in by_split.items():
+        if not ids:
+            continue
+        path = paths[key]
+        new_rows = pool[pool["training_id"].isin(ids)].copy()
+        if path.is_file():
+            existing = pd.read_csv(path)
+            overlap = set(existing["training_id"]) & set(ids)
+            if overlap:
+                raise ValueError(f"{path.name}: already contains {sorted(overlap)[:3]}")
+            combined = pd.concat([existing, new_rows], ignore_index=True)
+        else:
+            combined = new_rows
+        if write:
+            combined.to_csv(path, index=False)
+        added[key] = ids
+
+    return added
+
+
+def append_missing_solvable_pipeline(
+    *,
+    v1_dir: Path | None = None,
+    oracle_path: str | Path | None = None,
+    with_qce_features: bool = True,
+    temperature: float = 100.0,
+    decompose_model: str = "gpt-4o",
+    dry_run: bool = False,
+) -> dict[str, list[str]]:
+    """Append missing solvable ids, refresh soft labels, optionally build QCE features."""
+    root = v1_dir or default_v1_dir()
+    oracle_path = Path(oracle_path or (root / "oracle_results1.csv"))
+    added = append_missing_solvable_to_v1_splits(
+        v1_dir=root,
+        oracle_path=oracle_path,
+        write=not dry_run,
+    )
+    if not any(added.values()):
+        print("No solvable training_ids missing from QCE splits.")
+        return added
+
+    for key, ids in added.items():
+        print(f"  {key}: +{len(ids)} → {ids}")
+
+    if dry_run:
+        print("(dry-run: splits/features not written beyond append preview)")
+        return added
+
+    apply_soft_labels_to_v1_splits(
+        v1_dir=root,
+        oracle_path=oracle_path.name,
+        temperature=temperature,
+        write=True,
+    )
+    print("Refreshed soft labels on QCE splits.")
+
+    if with_qce_features:
+        build_qce_features_for_added_ids(
+            added,
+            v1_dir=root,
+            decompose_model=decompose_model,
+        )
+
+    return added
+
+
+def training_ids_missing_qce_features(
+    *,
+    v1_dir: Path | None = None,
+    qce_features_dir: Path | None = None,
+) -> dict[str, list[str]]:
+    """Ids present in split CSV but absent from complexity_record_{split}.parquet."""
+    root = v1_dir or default_v1_dir()
+    repo = repo_root()
+    qce_features_dir = qce_features_dir or (repo / "datasets/qce_features")
+    paths = v1_split_paths(root)
+    missing: dict[str, list[str]] = {k: [] for k in SPLIT_KEYS}
+    for split_key, csv_path in paths.items():
+        if not csv_path.is_file():
+            continue
+        ids_csv = set(pd.read_csv(csv_path)["training_id"].astype(str))
+        c_path = qce_features_dir / f"complexity_record_{split_key}.parquet"
+        if c_path.is_file():
+            ids_c = set(pd.read_parquet(c_path)["training_id"].astype(str))
+        else:
+            ids_c = set()
+        missing[split_key] = sorted(ids_csv - ids_c)
+    return missing
+
+
+def build_qce_features_for_added_ids(
+    added_by_split: dict[str, list[str]],
+    *,
+    v1_dir: Path | None = None,
+    decompose_model: str = "gpt-4o",
+    qce_features_dir: Path | None = None,
+    decomposer_cache_dir: Path | None = None,
+    train_norm_json: Path | None = None,
+) -> None:
+    """Decompose + append complexity / embedding parquet rows for newly added split ids."""
+    from qce.complexity import complexity_dataframe, load_train_norm, write_complexity_parquet
+    from qce.decompose import decompose_batch
+    from routing.router import plans_from_cache
+
+    root = v1_dir or default_v1_dir()
+    repo = repo_root()
+    qce_features_dir = qce_features_dir or (repo / "datasets/qce_features")
+    decomposer_cache_dir = decomposer_cache_dir or (repo / "datasets/decomposer_cache")
+    train_norm_json = train_norm_json or (repo / "models/qce_graph/train_norm.json")
+    norm = load_train_norm(train_norm_json)
+    paths = v1_split_paths(root)
+
+    for split_key, ids in added_by_split.items():
+        if not ids:
+            continue
+        csv_path = paths[split_key]
+        cache_path = decomposer_cache_dir / f"qce_{split_key}_plans.jsonl"
+        c_path = qce_features_dir / f"complexity_record_{split_key}.parquet"
+        e_path = qce_features_dir / f"query_embeddings_{split_key}.parquet"
+
+        corpus = pd.read_csv(csv_path)
+        sub = corpus[corpus["training_id"].astype(str).isin(ids)].copy()
+        rows = sub.to_dict(orient="records")
+        print(f"\n[{split_key}] decompose {len(rows)} queries → {cache_path.name}")
+        decompose_batch(
+            rows,
+            cache_path=cache_path,
+            model=decompose_model,
+            force_refresh=False,
+        )
+        plans = plans_from_cache(rows, cache_path)
+        new_c = complexity_dataframe(plans, norm=norm, fit_norm=False)
+        if c_path.is_file():
+            old_c = pd.read_parquet(c_path)
+            old_c = old_c[~old_c["training_id"].astype(str).isin(ids)]
+            c_df = pd.concat([old_c, new_c], ignore_index=True)
+        else:
+            c_df = new_c
+        write_complexity_parquet(c_df, c_path)
+        print(f"  complexity → {c_path} ({len(c_df)} rows)")
+
+        from scripts.build_query_embeddings import append_embeddings_for_training_ids
+
+        append_embeddings_for_training_ids(
+            split_key,
+            ids,
+            labels_dir=root,
+            out_dir=qce_features_dir,
+        )
+        print(f"  embeddings → {e_path}")
+
+
 def apply_soft_labels_to_v1_splits(
     *,
     v1_dir: Path | None = None,
@@ -610,7 +978,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--temperature",
         type=float,
         default=100.0,
-        help="Cost sharpness λ in exp(-λ * cost_usd) among correct agents.",
+        help="Soft-label temperature for exp(-temperature * cost_usd) among correct agents.",
+    )
+    p.add_argument(
+        "--lambda",
+        dest="utility_lambda",
+        type=float,
+        default=DEFAULT_UTILITY_LAMBDA,
+        help=(
+            "Utility cost penalty λ for oracle-agent regeneration: "
+            f"U = quality - λ * cost (default: {DEFAULT_UTILITY_LAMBDA})."
+        ),
     )
     p.add_argument(
         "--cost-col",
@@ -659,6 +1037,40 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Infer per-dataset λ from qce_val.csv (sweep on val), then apply to "
             "all splits being updated."
         ),
+    )
+    p.add_argument(
+        "--regenerate-oracle-agent",
+        action="store_true",
+        help=(
+            "Rebuild utility cost-aware oracle_agent and label metadata from oracle CSV using "
+            "strict utility argmax: Perf - λ*Cost (λ from --lambda)."
+        ),
+    )
+    p.add_argument(
+        "--append-missing-solvable",
+        action="store_true",
+        help=(
+            "Append pool rows with ≥1 correct agent that are missing from QCE splits "
+            f"(from {POOL_LABELS_NAME}), proportional train/val/test; refresh p_*."
+        ),
+    )
+    p.add_argument(
+        "--with-qce-features",
+        action="store_true",
+        help=(
+            "With --append-missing-solvable: decompose, complexity_record_*, "
+            "query_embeddings_* for added ids only."
+        ),
+    )
+    p.add_argument(
+        "--decompose-model",
+        default="gpt-4o",
+        help="LLM for plan decompose when --with-qce-features (default: gpt-4o).",
+    )
+    p.add_argument(
+        "--build-missing-qce-features",
+        action="store_true",
+        help="Decompose + complexity + embeddings for ids in QCE CSVs but not in feature parquets.",
     )
     return p
 
@@ -715,14 +1127,62 @@ def main(argv: Sequence[str] | None = None) -> int:
                 title=f"=== {rel} ===",
                 by_dataset=by_dataset,
             )
-            if by_dataset and DATASET_COL in table.columns:
-                rec = recommend_temperature_per_dataset(table)
-                ds_only = {k: v for k, v in rec.items() if k != "all"}
-                if ds_only:
-                    print("  Recommended λ per dataset:")
-                    for ds, lam in sorted(ds_only.items()):
-                        print(f"    {ds}: {lam}")
             print()
+        return 0
+
+    if args.build_missing_qce_features:
+        gaps = training_ids_missing_qce_features(v1_dir=v1_dir)
+        n_gap = sum(len(v) for v in gaps.values())
+        if not n_gap:
+            print("All QCE split rows have complexity_record_* rows.")
+            return 0
+        for key, ids in gaps.items():
+            if ids:
+                print(f"  {key}: {len(ids)} missing features")
+        build_qce_features_for_added_ids(
+            gaps,
+            v1_dir=v1_dir,
+            decompose_model=args.decompose_model,
+        )
+        return 0
+
+    if args.append_missing_solvable:
+        added = append_missing_solvable_pipeline(
+            v1_dir=v1_dir,
+            oracle_path=oracle_path,
+            with_qce_features=args.with_qce_features,
+            temperature=args.temperature,
+            decompose_model=args.decompose_model,
+            dry_run=args.dry_run,
+        )
+        if not args.dry_run:
+            print(f"Done. Added {sum(len(v) for v in added.values())} rows across splits.")
+        return 0
+
+    if args.regenerate_oracle_agent:
+        utility_lambda = float(args.utility_lambda)
+        if args.update_qce_splits:
+            label_paths = [v1_dir / name for name in V1_SPLITS]
+        elif args.labels:
+            label_paths = [Path(p) for p in args.labels]
+        else:
+            raise SystemExit(
+                "Use --regenerate-oracle-agent with --update-qce-splits or --labels PATH."
+            )
+        results = regenerate_oracle_agent_labels_in_files(
+            label_paths,
+            oracle_path,
+            utility_lambda=utility_lambda,
+            agents=agents,
+            cost_col=args.cost_col,
+            write=not args.dry_run,
+        )
+        for path, df in results.items():
+            n = len(df)
+            labeled = int(df["label_status"].astype(str).eq("labeled").sum())
+            print(f"{path}: {n} rows, {labeled} labeled (λ={utility_lambda})")
+        if args.dry_run:
+            print("(dry-run: no files written)")
         return 0
 
     if args.auto_temperature:

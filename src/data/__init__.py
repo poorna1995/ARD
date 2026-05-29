@@ -1,17 +1,8 @@
-from .swe_bench_loader import SWEBenchLoader
-from .gaia_loader import GAIALoader
-from .mmlu_pro_loader import MMLUProLoader
-from .math_loader import MathLoader
+"""Dataset loaders — see ``registry.py`` for the canonical registry."""
 
-LOADER_REGISTRY = {
-    "swe_bench": SWEBenchLoader,
-    "gaia": GAIALoader,
-    "mmlu_pro": MMLUProLoader,
-    "math": MathLoader,
-}
+from .registry import REGISTRY, get_loader
 
+# Back-compat alias used by older scripts
+LOADER_REGISTRY = REGISTRY
 
-def get_loader(name, config, data_root="datasets"):
-    if name not in LOADER_REGISTRY:
-        raise ValueError(f"Unknown dataset: '{name}'")
-    return LOADER_REGISTRY[name](config=config, data_root=data_root)
+__all__ = ["REGISTRY", "LOADER_REGISTRY", "get_loader"]

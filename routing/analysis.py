@@ -22,6 +22,7 @@ from routing.router import (
     load_router,
     load_split,
 )
+from src.utils.soft_labels import DEFAULT_UTILITY_LAMBDA
 
 DEFAULT_ORACLE = REPO_ROOT / "datasets/train_samples/v1/oracle_results1.csv"
 DEFAULT_ROUTER = ROUTER_MODEL_PATH
@@ -34,6 +35,16 @@ AGENT_COLORS: dict[str, str] = {
     "multiagent": "#E45756",
 }
 
+DATASET_DISPLAY_NAMES: dict[str, str] = {
+    "hotpot": "HotpotQA",
+    "musique": "MuSiQue",
+    "math": "MATH",
+    "mmlu": "MMLU",
+    "gaia": "GAIA",
+}
+DISCUSSION_DATASET_ORDER = list(DATASET_DISPLAY_NAMES.keys())
+CONFIDENCE_BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+
 Top2Mode = Literal["cheaper_tier", "cheaper_cost", "react_fallback", "argmax"]
 
 
@@ -44,10 +55,12 @@ class StrategyMetrics:
     mean_cost_usd: float
     n: int
     oracle_match_rate: float | None = None
+    mean_utility_regret: float | None = None
+    em_per_usd: float | None = None
 
 
 def load_oracle_long(path: Path) -> pd.DataFrame:
-    """Load long-form oracle CSV (avoids ``src.utils`` import side effects)."""
+    """Load long-form oracle CSV."""
     df = pd.read_csv(path)
     required = {"training_id", "agent", "is_correct", "cost_usd"}
     missing = required - set(df.columns)
@@ -56,16 +69,23 @@ def load_oracle_long(path: Path) -> pd.DataFrame:
     return df[df["agent"].isin(AGENTS)].copy()
 
 
+def _oracle_agent_perf(r: pd.Series) -> float:
+    """Match ``soft_labels.regenerate_oracle_agent_labels`` perf definition."""
+    ok = float(pd.to_numeric(r["is_correct"], errors="coerce") or 0.0) > 0
+    failed = float(pd.to_numeric(r.get("is_failed"), errors="coerce") or 0.0) > 0
+    has_answer = str(r.get("predicted_answer", "") or "").strip() != ""
+    return float(ok and not failed and has_answer)
+
+
 def oracle_outcome_matrix(
     oracle_path: Path,
     training_ids: pd.Index | list[str],
+    *,
+    utility_lambda: float = DEFAULT_UTILITY_LAMBDA,
 ) -> pd.DataFrame:
-    """Per ``training_id``: ``cost_{agent}``, ``correct_{agent}`` from long-form oracle."""
+    """Per ``training_id``: cost/correct/utility per agent (utility = perf − λ·cost)."""
     oracle = load_oracle_long(oracle_path)
     oracle = oracle[oracle["training_id"].isin(training_ids)].copy()
-    oracle["is_correct"] = (
-        pd.to_numeric(oracle["is_correct"], errors="coerce").fillna(0).astype(int)
-    )
     oracle["cost_usd"] = pd.to_numeric(oracle["cost_usd"], errors="coerce").fillna(0.0)
 
     rows: list[dict[str, Any]] = []
@@ -76,10 +96,15 @@ def oracle_outcome_matrix(
             if sub.empty:
                 row[f"cost_{agent}"] = np.nan
                 row[f"correct_{agent}"] = 0
+                row[f"utility_{agent}"] = -float(utility_lambda) * 0.0
             else:
                 r = sub.iloc[0]
-                row[f"cost_{agent}"] = float(r["cost_usd"])
-                row[f"correct_{agent}"] = int(r["is_correct"])
+                cost = float(r["cost_usd"])
+                perf = _oracle_agent_perf(r)
+                row[f"cost_{agent}"] = cost
+                row[f"correct_{agent}"] = int(perf)
+                row[f"utility_{agent}"] = perf - float(utility_lambda) * cost
+        row["max_utility"] = max(float(row[f"utility_{a}"]) for a in AGENTS)
         rows.append(row)
     out = pd.DataFrame(rows)
     return out.set_index("training_id")
@@ -104,16 +129,24 @@ def attach_router(
 
 
 def attach_outcomes(df: pd.DataFrame, outcomes: pd.DataFrame) -> pd.DataFrame:
-    """Merge oracle execution outcomes; add ``exec_correct``, ``exec_cost`` for ``router_pred``."""
+    """Merge oracle outcomes; exec metrics and utility regret for ``router_pred``."""
     out = df.merge(outcomes, left_on="training_id", right_index=True, how="left")
     exec_correct = []
     exec_cost = []
+    utility_regret = []
     for _, row in out.iterrows():
-        pred = row["router_pred"]
+        pred = str(row["router_pred"])
         exec_correct.append(int(row.get(f"correct_{pred}", 0)))
         exec_cost.append(float(row.get(f"cost_{pred}", np.nan)))
+        u_pred = float(row.get(f"utility_{pred}", np.nan))
+        u_max = float(row.get("max_utility", np.nan))
+        if pd.isna(u_pred) or pd.isna(u_max):
+            utility_regret.append(np.nan)
+        else:
+            utility_regret.append(max(0.0, u_max - u_pred))
     out["exec_correct"] = exec_correct
     out["exec_cost_usd"] = exec_cost
+    out["utility_regret"] = utility_regret
     out["oracle_label_match"] = (out["router_pred"] == out[TARGET]).astype(int)
     return out
 
@@ -174,22 +207,48 @@ def route_top2(
     raise ValueError(f"unknown top2 mode {mode!r}")
 
 
+def _strategy_metrics(
+    name: str,
+    accs: list[int],
+    costs: list[float],
+    regrets: list[float],
+    oracle_match: list[int] | None,
+    n: int,
+) -> StrategyMetrics:
+    mean_cost = float(pd.Series(costs).mean())
+    acc = float(np.mean(accs))
+    reg = regrets
+    mean_regret = float(np.nanmean(reg)) if reg and not all(pd.isna(reg) for reg in reg) else None
+    em_per_usd = (acc / mean_cost) if mean_cost > 0 else None
+    return StrategyMetrics(
+        name=name,
+        accuracy=acc,
+        mean_cost_usd=mean_cost,
+        n=n,
+        oracle_match_rate=float(np.mean(oracle_match)) if oracle_match is not None else None,
+        mean_utility_regret=mean_regret,
+        em_per_usd=em_per_usd,
+    )
+
+
 def metrics_for_agent_column(
     df: pd.DataFrame,
     agent: str,
     *,
     name: str,
 ) -> StrategyMetrics:
-    accs = [int(row.get(f"correct_{agent}", 0)) for _, row in df.iterrows()]
-    costs = [float(row.get(f"cost_{agent}", np.nan)) for _, row in df.iterrows()]
-    oracle_match = [int(agent == row[TARGET]) for _, row in df.iterrows()]
-    return StrategyMetrics(
-        name=name,
-        accuracy=float(np.mean(accs)),
-        mean_cost_usd=float(pd.Series(costs).mean()),
-        n=len(df),
-        oracle_match_rate=float(np.mean(oracle_match)),
-    )
+    accs = []
+    costs = []
+    regrets = []
+    oracle_match = []
+    for _, row in df.iterrows():
+        accs.append(int(row.get(f"correct_{agent}", 0)))
+        costs.append(float(row.get(f"cost_{agent}", np.nan)))
+        u = float(row.get(f"utility_{agent}", np.nan))
+        u_max = float(row.get("max_utility", np.nan))
+        regrets.append(max(0.0, u_max - u) if pd.notna(u) and pd.notna(u_max) else np.nan)
+        oracle_match.append(int(agent == row[TARGET]))
+    return _strategy_metrics(name, accs, costs, regrets, oracle_match, len(df))
 
 
 def metrics_for_routed(
@@ -200,19 +259,17 @@ def metrics_for_routed(
 ) -> StrategyMetrics:
     accs = []
     costs = []
+    regrets = []
     oracle_match = []
     for _, row in df.iterrows():
         agent = str(row[agent_col])
         accs.append(int(row.get(f"correct_{agent}", 0)))
         costs.append(float(row.get(f"cost_{agent}", np.nan)))
+        u = float(row.get(f"utility_{agent}", np.nan))
+        u_max = float(row.get("max_utility", np.nan))
+        regrets.append(max(0.0, u_max - u) if pd.notna(u) and pd.notna(u_max) else np.nan)
         oracle_match.append(int(agent == row[TARGET]))
-    return StrategyMetrics(
-        name=name,
-        accuracy=float(np.mean(accs)),
-        mean_cost_usd=float(pd.Series(costs).mean()),
-        n=len(df),
-        oracle_match_rate=float(np.mean(oracle_match)),
-    )
+    return _strategy_metrics(name, accs, costs, regrets, oracle_match, len(df))
 
 
 def baseline_strategies(df: pd.DataFrame) -> list[StrategyMetrics]:
@@ -703,6 +760,113 @@ def plot_cost_accuracy(
     plt.close(fig)
 
 
+def dataset_regret_slice_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Mean utility regret by dataset (includes rows with n=0 for paper table)."""
+    rows: list[dict[str, Any]] = []
+    for key in DISCUSSION_DATASET_ORDER:
+        sub = df.loc[df["dataset"] == key]
+        n = int(len(sub))
+        rows.append(
+            {
+                "dataset_key": key,
+                "dataset": DATASET_DISPLAY_NAMES[key],
+                "n": n,
+                "mean_utility_regret": float(sub["utility_regret"].mean()) if n else np.nan,
+                "accuracy": float(sub["exec_correct"].mean()) if n else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def confidence_regret_slice_table(
+    df: pd.DataFrame,
+    *,
+    edges: tuple[float, ...] = CONFIDENCE_BIN_EDGES,
+) -> pd.DataFrame:
+    """Mean utility regret by router max-softmax bin."""
+    work = df.dropna(subset=["max_prob", "utility_regret"])
+    rows: list[dict[str, Any]] = []
+    n_bins = len(edges) - 1
+    for i in range(n_bins):
+        lo, hi = edges[i], edges[i + 1]
+        if i < n_bins - 1:
+            mask = (work["max_prob"] >= lo) & (work["max_prob"] < hi)
+        else:
+            mask = (work["max_prob"] >= lo) & (work["max_prob"] <= hi)
+        sub = work[mask]
+        n = int(len(sub))
+        rows.append(
+            {
+                "max_prob_bin": f"{lo:.1f}–{hi:.1f}",
+                "bin_lo": lo,
+                "bin_hi": hi,
+                "n": n,
+                "mean_utility_regret": float(sub["utility_regret"].mean()) if n else np.nan,
+                "mean_max_prob": float(sub["max_prob"].mean()) if n else np.nan,
+                "accuracy": float(sub["exec_correct"].mean()) if n else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _format_slice_markdown(
+    dataset_tbl: pd.DataFrame,
+    conf_tbl: pd.DataFrame,
+    *,
+    split: str,
+    router: str,
+) -> str:
+    lines = [
+        f"# Discussion slices — {split}",
+        "",
+        f"Router: `{router}`",
+        "",
+        "## Dataset slices",
+        "",
+        "| Dataset | n | Regret | Accuracy |",
+        "|---------|---|--------|----------|",
+    ]
+    for _, r in dataset_tbl.iterrows():
+        regret = "—" if pd.isna(r["mean_utility_regret"]) or int(r["n"]) == 0 else f"{r['mean_utility_regret']:.3f}"
+        acc = "—" if pd.isna(r["accuracy"]) or int(r["n"]) == 0 else f"{r['accuracy']:.2f}"
+        lines.append(f"| {r['dataset']} | {int(r['n'])} | {regret} | {acc} |")
+    lines.extend(
+        [
+            "",
+            "_MMLU and GAIA are not in the internal QCE val/test splits (100×3 from hotpot/musique/math only)._",
+            "",
+            "## Confidence slices (max softmax)",
+            "",
+            "| Max prob bin | n | Regret | Accuracy |",
+            "|--------------|---|--------|----------|",
+        ]
+    )
+    for _, r in conf_tbl.iterrows():
+        regret = "—" if pd.isna(r["mean_utility_regret"]) else f"{r['mean_utility_regret']:.3f}"
+        acc = "—" if pd.isna(r["accuracy"]) else f"{r['accuracy']:.2f}"
+        lines.append(f"| {r['max_prob_bin']} | {int(r['n'])} | {regret} | {acc} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_discussion_slices(
+    df: pd.DataFrame,
+    out_dir: Path,
+    *,
+    split: str,
+    router: str = "",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Write dataset/confidence regret CSVs and a markdown summary for one split."""
+    out_dir = Path(out_dir)
+    dataset_tbl = dataset_regret_slice_table(df)
+    conf_tbl = confidence_regret_slice_table(df)
+    dataset_tbl.to_csv(out_dir / "slices_dataset_regret.csv", index=False)
+    conf_tbl.to_csv(out_dir / "slices_confidence_regret.csv", index=False)
+    md = _format_slice_markdown(dataset_tbl, conf_tbl, split=split, router=router)
+    (out_dir / "discussion_slices.md").write_text(md, encoding="utf-8")
+    return dataset_tbl, conf_tbl
+
+
 def plot_top2_sweep(top2_df: pd.DataFrame, out_path: Path, *, title_suffix: str = "") -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for mode, sub in top2_df.groupby("mode"):
@@ -751,13 +915,18 @@ def run_full_analysis(
     # Best top-2 row by accuracy
     top2_best = top2.loc[top2["accuracy"].idxmax()].to_dict() if len(top2) else {}
 
+    router_m = next(p for p in baselines if p.name == "router_argmax")
     summary = {
         "split": split,
         "n": len(df),
         "router": str(router_path),
+        "utility_lambda": DEFAULT_UTILITY_LAMBDA,
         "router_macro_f1": oracle_macro_f1(df, "router_pred"),
-        "router_accuracy_exec": float(df["exec_correct"].mean()),
+        "router_accuracy_exec": router_m.accuracy,
         "router_accuracy_label": float(df["oracle_label_match"].mean()),
+        "router_mean_cost_usd": router_m.mean_cost_usd,
+        "router_mean_utility_regret": router_m.mean_utility_regret,
+        "router_em_per_usd": router_m.em_per_usd,
         "mean_max_prob": float(df["max_prob"].mean()),
         "calibration": cal,
         "baselines": [p.__dict__ for p in baselines],
@@ -778,9 +947,12 @@ def run_full_analysis(
             "margin_top2",
             "exec_correct",
             "exec_cost_usd",
+            "utility_regret",
             "oracle_label_match",
         ]
     ].to_csv(out_dir / "per_question.csv", index=False)
+
+    write_discussion_slices(df, out_dir, split=split, router=str(router_path))
 
     return summary
 
@@ -802,7 +974,7 @@ def main_analyze(argv: list[str] | None = None) -> None:
     p.add_argument("--importance-repeats", type=int, default=10)
     args = p.parse_args(argv)
     splits = ["val", "test"] if args.split == "both" else [args.split]
-    root = args.out_dir or (REPO_ROOT / "results/router_analysis")
+    root = args.out_dir or (REPO_ROOT / "results/reports/router")
     all_summaries: dict[str, dict] = {}
     for split in splits:
         out = root / split
@@ -830,6 +1002,22 @@ def main_analyze(argv: list[str] | None = None) -> None:
         combined = root / "summary_all_splits.json"
         combined.write_text(json.dumps(all_summaries, indent=2), encoding="utf-8")
         print(f"\nCombined summary: {combined}")
+
+    router_label = Path(args.router).stem
+    parts: list[str] = [
+        f"# Router analysis — {router_label}",
+        "",
+        f"Model: `{args.router}`",
+        "",
+    ]
+    for split in splits:
+        md_path = root / split / "discussion_slices.md"
+        if md_path.is_file():
+            parts.append(md_path.read_text(encoding="utf-8").strip())
+            parts.append("")
+    disc_path = root / "DISCUSSION_SLICES.md"
+    disc_path.write_text("\n".join(parts).strip() + "\n", encoding="utf-8")
+    print(f"Discussion slices: {disc_path}")
 
 
 if __name__ == "__main__":

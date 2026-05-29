@@ -19,7 +19,7 @@ The system does one thing in three steps:
 | 1 | You have a **query** string and **dataset** name (GAIA, Hotpot, …) | `orchestrator/pipeline.py` |
 | 2 | **LLM decompose** writes a plan: subtasks, tools, dependencies | `qce/decompose.py` → `datasets/decomposer_cache/*.jsonl` |
 | 3 | Plan becomes a **procedure DAG** (nodes = subtasks, edges = depends_on) | `qce/graph.py` |
-| 4 | DAG + plan text → **C(Q)** = 5 values: `dim_structural` … `dim_uncertainty` | `qce/complexity.py` |
+| 4 | DAG + plan text → **C(Q)** main 5 values: `dim_structural`, `dim_reasoning`, `dim_evidence`, `dim_tool`, `dim_coordination_uncertainty` | `qce/complexity.py` |
 | — | In parallel: query text → embedding → **PCA-16** → `emb_*` columns | `scripts/build_query_embeddings.py` |
 | 5 | **Merge** C(Q) + emb_* + dataset → one **feature row** | `routing/router.py` `merge_feature_tables` |
 
@@ -33,15 +33,23 @@ The system does one thing in three steps:
 
 | Step | What happens |
 |------|----------------|
-| 6 | Build a **training table**: many queries, each with a feature row + **oracle_agent** label (which of raw/cot/react/multiagent was correct) |
-| 7 | Fit **HistGradientBoostingClassifier** on columns: `dim_*` + `emb_*` + dataset (one-hot) |
-| 8 | Save **`models/router/hgbm_graph_emb_balanced.joblib`** |
+| 6 | Build a **training table**: feature row + **hard** `oracle_agent` (utility argmax) and/or **soft** `p_*` (cost-aware mass over *correct* agents only) |
+| 7 | **Soft-train** → KL / soft CE on `p_*` with `dim_*` + `emb_*` (`cvec5_emb`) |
+| 8 | Save role-specific checkpoints (see table below); **`ROUTER_MODEL_PATH`** → `hgbm_cvec5_emb_soft_kl.joblib` |
+
+**Router roles (internal test, λ=25, train n=808):**
+
+| Role | Model | Artifact | Test regret |
+|------|-------|----------|-------------|
+| **Primary** | Soft HGBM | `hgbm_cvec5_emb_soft_kl.joblib` | 0.192 |
+| **Secondary** | Soft Logistic | `logreg_cvec5_emb_soft_kl.joblib` | 0.199 |
+| **Legacy** | Hard HGBM | `hgbm_cvec5_emb_default.joblib` | 0.361 |
 
 **Model output:** For each query, four probabilities that sum to 1:
 
 `p_raw`, `p_cot`, `p_react`, `p_multiagent`
 
-**Train command:** `uv run python -m routing train --save`
+**Train commands:** `soft-train --classifier hgbm --save` (primary); `soft-train --classifier logreg --save` (secondary); `routing train --feature-set cvec5_emb --save` (legacy hard HGBM only)
 
 ---
 

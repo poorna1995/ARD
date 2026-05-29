@@ -474,6 +474,48 @@ def decompose_batch(
     return results
 
 
+def recompute_plan_cache_costs(
+    path: str | Path,
+    *,
+    model_override: str | None = None,
+    write: bool = True,
+) -> dict[str, Any]:
+    """Fix ``cost_usd`` in a plans JSONL from stored tokens + ``COST_PER_1M``."""
+    path = Path(path)
+    plans = load_plans_jsonl(path)
+    if not plans:
+        return {"path": str(path), "n": 0, "n_fixed": 0}
+
+    n_fixed = 0
+    total_before = 0.0
+    total_after = 0.0
+    for rec in plans:
+        model = model_override or str(rec.get("model") or DEFAULT_DECOMPOSE_MODEL)
+        pt = int(rec.get("prompt_tokens") or 0)
+        ct = int(rec.get("completion_tokens") or 0)
+        old = float(rec.get("cost_usd") or 0)
+        new = round(_cost_usd(model, pt, ct), 8)
+        total_before += old
+        total_after += new
+        if abs(old - new) > 1e-12:
+            n_fixed += 1
+        rec["model"] = model
+        rec["cost_usd"] = new
+
+    if write:
+        write_plans_jsonl(path, plans)
+
+    return {
+        "path": str(path),
+        "n": len(plans),
+        "n_fixed": n_fixed,
+        "total_cost_usd_before": round(total_before, 6),
+        "total_cost_usd_after": round(total_after, 6),
+        "mean_musd_before": round(1000 * total_before / len(plans), 4),
+        "mean_musd_after": round(1000 * total_after / len(plans), 4),
+    }
+
+
 def _main() -> None:
     import argparse
 
@@ -497,7 +539,26 @@ def _main() -> None:
         dest="labeled_only",
         help="Include all rows regardless of label_status",
     )
+    parser.add_argument(
+        "--recompute-costs",
+        action="store_true",
+        help="Recompute cost_usd from prompt/completion tokens + model rates; no LLM calls.",
+    )
+    parser.add_argument(
+        "--recompute-model",
+        default=None,
+        help="With --recompute-costs, force this model for all rows (default: per-row model).",
+    )
     args = parser.parse_args()
+
+    if args.recompute_costs:
+        summary = recompute_plan_cache_costs(
+            args.cache,
+            model_override=args.recompute_model,
+            write=True,
+        )
+        print(json.dumps(summary, indent=2))
+        return
 
     corpus = load_corpus(args.corpus, labeled_only=args.labeled_only)
     rows = corpus.to_dict(orient="records")

@@ -28,6 +28,12 @@ Examples::
     --routes-path results/experiments/gaia_routes.parquet --grade \\
     --append-to results/orchestrator/gaia/pipeline_results.parquet
 
+  # Long runs: stream JSONL + checkpoint parquet after each query (auto-resume if output exists)
+  uv run python orchestrator/pipeline.py \\
+    --routes-path results/experiments/baseline_routes/gaia_baseline_multiagent_routes.parquet \\
+    --dataset gaia --grade \\
+    --output_path results/orchestrator/graph_main_tuned/gaia/gaia_baseline_multiagent/pipeline_results.parquet
+
   # QCE internal test (features prebuilt)
   uv run python orchestrator/pipeline.py --split test --route-only
 
@@ -42,7 +48,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -72,6 +78,14 @@ DEFAULT_OUTPUT_ROOT = REPO_ROOT / "results/orchestrator"
 QCE_SPLITS = ("train", "val", "test")
 ROUTE_AGENT_COLS = ("router_pred", "assigned_agent")
 EXECUTION_DONE_COLS = ("predicted_answer", "response_predicted_answer")
+# Merged from eval when executing saved routes (Hotpot / MuSiQue need passages for retrieve).
+_EPISODE_CONTEXT_COLS = (
+    "context",
+    "paragraphs",
+    "passages",
+    "episode_context",
+    "metadata",
+)
 
 
 def _read_table(path: Path) -> pd.DataFrame:
@@ -80,6 +94,28 @@ def _read_table(path: Path) -> pd.DataFrame:
     if path.suffix.lower() in {".parquet", ".pq"}:
         return pd.read_parquet(path)
     raise ValueError(f"Unsupported routes file type: {path.suffix} (use .parquet or .csv)")
+
+
+def _routes_has_usable_episode_context(df: pd.DataFrame) -> bool:
+    for col in _EPISODE_CONTEXT_COLS:
+        if col not in df.columns:
+            continue
+        series = df[col]
+        if series.notna().any():
+            return True
+    return False
+
+
+def _ensure_training_id(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "training_id" not in out.columns:
+        if "id" in out.columns:
+            out["training_id"] = out["id"].astype(str)
+        else:
+            raise KeyError("Routes/eval frame needs training_id or id")
+    else:
+        out["training_id"] = out["training_id"].astype(str)
+    return out
 
 
 def load_routes_frame(
@@ -92,13 +128,15 @@ def load_routes_frame(
     """
     Load a route-only artifact (``router_pred`` / proba columns) for execution.
 
-    If ``query`` is missing, merges eval rows from ``--dataset``, ``--data_path``, or ``--split``.
+    Merges eval rows from ``--dataset``, ``--data_path``, or ``--split`` when
+    ``query`` is missing **or** when Hotpot/MuSiQue passage ``context`` is missing
+    (required for ReAct ``retrieve``).
     """
     path = Path(routes_path)
     if not path.is_file():
         raise FileNotFoundError(f"Routes file not found: {path}")
 
-    df = _read_table(path)
+    df = _ensure_training_id(_read_table(path))
     if not any(c in df.columns for c in ROUTE_AGENT_COLS):
         raise ValueError(f"Routes file must include one of {ROUTE_AGENT_COLS}: {path}")
 
@@ -107,23 +145,48 @@ def load_routes_frame(
     if "assigned_agent" not in df.columns:
         df["assigned_agent"] = df["router_pred"].astype(str)
 
-    needs_merge = (
+    needs_query_merge = (
         "query" not in df.columns
         or df["query"].isna().all()
         or df["query"].astype(str).str.strip().eq("").all()
     )
-    if needs_merge:
-        if split is None and not dataset and data_path is None:
+    row_ds = str(df["dataset"].iloc[0]) if len(df) and "dataset" in df.columns else ""
+    ds_key = resolve_dataset_name(dataset or row_ds)
+    needs_context_merge = (
+        ds_key in datasets_requiring_episode_context()
+        and not _routes_has_usable_episode_context(df)
+    )
+
+    if needs_query_merge or needs_context_merge:
+        if split is None and not dataset and data_path is None and needs_query_merge:
             raise ValueError(
                 "Routes file has no query column; pass --dataset, --data_path, or --split to merge eval rows."
             )
-        eval_df, _ = load_eval_frame(dataset=dataset, data_path=data_path, split=split)
+        if needs_context_merge and split is None and not dataset and not data_path:
+            raise ValueError(
+                f"Routes for {ds_key!r} lack passage context; pass --dataset {ds_key} "
+                "(or --data_path to eval parquet) when executing."
+            )
+        eval_df, _ = load_eval_frame(
+            dataset=dataset or ds_key,
+            data_path=data_path,
+            split=split,
+        )
+        eval_df = _ensure_training_id(eval_df)
         key = "training_id"
-        if key not in df.columns or key not in eval_df.columns:
+        if key not in eval_df.columns:
             raise KeyError(f"Cannot merge routes with eval data without {key!r}")
-        merge_cols = [c for c in eval_df.columns if c not in df.columns or c == key]
+
+        if needs_query_merge:
+            merge_cols = [c for c in eval_df.columns if c not in df.columns or c == key]
+        else:
+            merge_cols = [key] + [
+                c
+                for c in eval_df.columns
+                if c != key and (c not in df.columns or c in _EPISODE_CONTEXT_COLS)
+            ]
         df = df.merge(eval_df[merge_cols], on=key, how="left", suffixes=("", "_eval"))
-        if "query" not in df.columns:
+        if needs_query_merge and "query" not in df.columns:
             raise KeyError("Merged eval frame still missing query")
 
     if "expected_answer" not in df.columns:
@@ -257,6 +320,80 @@ def merge_pipeline_results(
     return pd.DataFrame.from_records(out)
 
 
+def _resolve_output_paths(
+    *,
+    output_path: str | Path | None,
+    jsonl_output_path: str | Path | None,
+    append_to: str | Path | None,
+    split: str | None,
+    dataset: str | None,
+) -> tuple[Path, Path]:
+    out_tag = split or (dataset or "eval")
+    if output_path is not None:
+        output = Path(output_path)
+    elif append_to is not None:
+        output = Path(append_to)
+    else:
+        output = DEFAULT_OUTPUT_ROOT / out_tag / "pipeline_results.parquet"
+    jsonl_output = (
+        Path(jsonl_output_path) if jsonl_output_path is not None else output.with_suffix(".jsonl")
+    )
+    return output, jsonl_output
+
+
+def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+    return records
+
+
+def _load_existing_results(
+    output: Path,
+    jsonl_output: Path,
+) -> pd.DataFrame | None:
+    """Load partial/finished run from parquet (preferred) or streamed JSONL."""
+    if output.is_file():
+        return _read_table(output)
+    if jsonl_output.is_file():
+        records = _load_jsonl_records(jsonl_output)
+        if records:
+            df = pd.DataFrame.from_records(records)
+            if "training_id" in df.columns:
+                df = df.drop_duplicates(subset="training_id", keep="last")
+            return df
+    return None
+
+
+def _append_jsonl_record(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
+
+
+def _write_pipeline_artifacts(
+    results_df: pd.DataFrame,
+    *,
+    output: Path,
+    jsonl_output: Path,
+    summary: dict[str, Any],
+    stream: bool,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _dataframe_for_parquet(results_df).to_parquet(output, index=False)
+    summary_path = output.with_suffix(".summary.json")
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if not stream:
+        jsonl_output.parent.mkdir(parents=True, exist_ok=True)
+        with jsonl_output.open("w", encoding="utf-8") as f:
+            for record in results_df.to_dict(orient="records"):
+                f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
+
+
 def run_pipeline(
     *,
     dataset: str | None = "gaia",
@@ -277,6 +414,9 @@ def run_pipeline(
     grade: bool = False,
     model: str = DEFAULT_AGENT_MODEL,
     limit: int | None = None,
+    stream: bool = True,
+    checkpoint_every: int = 1,
+    fresh: bool = False,
     verbose: bool = True,
 ) -> pd.DataFrame:
     if routes_path is not None and (build_features or force_refresh_features):
@@ -319,25 +459,50 @@ def run_pipeline(
         routed_df = load_router_frame(df, router_path=router_path)
 
     routes_full_df = routed_df
+    output, jsonl_output = _resolve_output_paths(
+        output_path=output_path,
+        jsonl_output_path=jsonl_output_path,
+        append_to=append_to,
+        split=split,
+        dataset=dataset,
+    )
+
     existing_df: pd.DataFrame | None = None
+    resume_source: str | None = None
     if append_to is not None:
         append_path = Path(append_to)
         if not append_path.is_file():
             raise FileNotFoundError(f"--append-to file not found: {append_path}")
         existing_df = _read_table(append_path)
+        resume_source = str(append_path)
+    elif execute_agents and not fresh:
+        existing_df = _load_existing_results(output, jsonl_output)
+        if existing_df is not None and not existing_df.empty:
+            resume_source = str(output if output.is_file() else jsonl_output)
+
+    if fresh and execute_agents and verbose:
+        for path in (output, jsonl_output, output.with_suffix(".summary.json")):
+            if path.is_file():
+                path.unlink()
+
+    done_ids: set[Any] = set()
+    if existing_df is not None and not existing_df.empty:
         done_ids = _done_training_ids(existing_df, retry_failed=retry_failed)
         pending_df = routes_full_df[~routes_full_df["training_id"].isin(done_ids)].copy()
         if verbose:
             print(
-                f"Resume: {len(done_ids)} done, {len(pending_df)} pending "
-                f"(of {len(routes_full_df)} routes)"
+                f"Resume from {resume_source}: {len(done_ids)} done, "
+                f"{len(pending_df)} pending (of {len(routes_full_df)} routes)"
             )
         routed_df = pending_df
     else:
-        done_ids = set()
+        pending_df = routed_df
 
     if limit is not None:
         routed_df = routed_df.head(limit).copy()
+
+    if stream and execute_agents and not fresh and existing_df is None and verbose:
+        print(f"Streaming: {jsonl_output} (append) + checkpoint parquet every {checkpoint_every} row(s)")
 
     records: list[dict[str, Any]] = []
     total = len(routed_df)
@@ -444,7 +609,34 @@ def run_pipeline(
 
         records.append(record)
 
-    if append_to is not None:
+        if stream and execute_agents:
+            _append_jsonl_record(jsonl_output, record)
+            if checkpoint_every > 0 and idx % checkpoint_every == 0:
+                checkpoint_df = merge_pipeline_results(routes_full_df, existing_df, records)
+                checkpoint_summary = _routing_summary(checkpoint_df)
+                if append_to is not None or existing_df is not None:
+                    checkpoint_summary["n_pending_this_run"] = total
+                    checkpoint_summary["n_done_before"] = len(done_ids)
+                    checkpoint_summary["n_total_routes"] = n_routes
+                if grade and "is_correct" in checkpoint_df.columns:
+                    checkpoint_summary["graded_accuracy"] = float(
+                        pd.to_numeric(checkpoint_df["is_correct"], errors="coerce").fillna(0).mean()
+                    )
+                _write_pipeline_artifacts(
+                    checkpoint_df,
+                    output=output,
+                    jsonl_output=jsonl_output,
+                    summary=checkpoint_summary,
+                    stream=True,
+                )
+                if verbose:
+                    acc = checkpoint_summary.get("graded_accuracy") or checkpoint_summary.get(
+                        "execution_accuracy"
+                    )
+                    acc_s = f"{acc:.3f}" if acc is not None else "n/a"
+                    print(f"[checkpoint] {len(checkpoint_df)}/{n_routes} rows saved (acc={acc_s})")
+
+    if append_to is not None or existing_df is not None:
         results_df = merge_pipeline_results(routes_full_df, existing_df, records)
     else:
         results_df = (
@@ -454,7 +646,7 @@ def run_pipeline(
         )
 
     summary = _routing_summary(results_df if len(results_df) else routes_full_df)
-    if append_to is not None:
+    if append_to is not None or existing_df is not None:
         summary["n_pending_this_run"] = total
         summary["n_done_before"] = len(done_ids)
         summary["n_total_routes"] = n_routes
@@ -467,33 +659,18 @@ def run_pipeline(
         summary["cascade_mean_rank"] = float(ranks.mean())
         summary["cascade_frac_needed_fallback"] = float((ranks > 1).mean())
 
-    out_tag = split or (dataset or "eval")
-    if output_path is not None:
-        output = Path(output_path)
-    elif append_to is not None:
-        output = Path(append_to)
-    else:
-        output = DEFAULT_OUTPUT_ROOT / out_tag / "pipeline_results.parquet"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _dataframe_for_parquet(results_df).to_parquet(output, index=False)
-
-    summary_path = output.with_suffix(".summary.json")
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-    jsonl_output = (
-        Path(jsonl_output_path)
-        if jsonl_output_path is not None
-        else output.with_suffix(".jsonl")
+    _write_pipeline_artifacts(
+        results_df,
+        output=output,
+        jsonl_output=jsonl_output,
+        summary=summary,
+        stream=stream,
     )
-    jsonl_output.parent.mkdir(parents=True, exist_ok=True)
-    jsonl_records = results_df.to_dict(orient="records")
-    with jsonl_output.open("w", encoding="utf-8") as f:
-        for record in jsonl_records:
-            f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
 
     if verbose:
         print(f"Saved: {output}")
-        print(f"Summary: {summary_path}")
+        print(f"Stream log: {jsonl_output}")
+        print(f"Summary: {output.with_suffix('.summary.json')}")
         print(json.dumps(summary, indent=2))
     return results_df
 
@@ -581,6 +758,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Ignore existing output/jsonl at --output_path and start from scratch.",
+    )
+    parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Disable per-row JSONL append and incremental parquet checkpoints.",
+    )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Write parquet + summary every N completed rows when streaming (default: 1).",
+    )
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -610,5 +804,8 @@ if __name__ == "__main__":
         grade=args.grade,
         model=args.model,
         limit=args.limit,
+        stream=not args.no_stream,
+        checkpoint_every=max(0, args.checkpoint_every),
+        fresh=args.fresh,
         verbose=not args.quiet,
     )

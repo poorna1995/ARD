@@ -1,11 +1,16 @@
 """
-G3 graph_emb HGBM router: train, evaluate, predict, and eval-feature build.
+QCE router — HGBM over complexity vectors + query embeddings.
 
-CLI (also ``python -m routing``)::
+CLI (``python -m routing``)::
 
-  uv run python -m routing train --save
+  uv run python -m routing train --feature-set cvec5_emb --save   # legacy hard HGBM only
+  uv run python -m routing soft-train --classifier hgbm --save   # primary (soft KL)
+  uv run python -m routing soft-train --classifier logreg --save # secondary (soft KL)
+  uv run python -m routing tune --save                              # CV-tuned comparison
+  uv run python -m routing seed-sweep                             # default vs tuned check
   uv run python -m routing eval --split test
-  uv run python -m routing tune --save
+
+Configuration lives in ``routing.config`` (paths, feature sets, production freeze).
 """
 
 from __future__ import annotations
@@ -33,48 +38,88 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.utils.class_weight import compute_sample_weight
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from routing.config import (
+    AGENTS,
+    CVEC5_ABLATION_CASES,
+    CVEC7_ABLATION_CASES,
+    DATASET_ALIASES,
+    DECOMPOSER_CACHE_DIR,
+    DEFAULT_AGENT_MODEL,
+    DEFAULT_HGBM_PARAMS,
+    EMBEDDING_COL_PREFIX,
+    EMBEDDINGS_PARQUET,
+    EVAL_SAMPLES_DIR,
+    FEATURE_SET_CLI_CHOICES,
+    GRAPH_MAIN_DIM_EMB_MODEL_PATH,
+    GRAPH_MAIN_EXPERIMENT_ID,
+    GRAPH_MAIN_MODEL_PATH,
+    HGBM_GRID,
+    PCA_PATH,
+    PROBA_COLS,
+    PRODUCTION_FEATURE_SET,
+    PRODUCTION_HGBM_PARAMS,
+    PRODUCTION_ROUTER_EXPERIMENT_ID,
+    PRODUCTION_ROUTER_PATH,
+    QCE_DATASETS,
+    QCE_FEATURES_DIR,
+    REPO_ROOT,
+    ROUTER_EXPERIMENT_ID,
+    ROUTER_MODEL_PATH,
+    ROUTER_V2_EXPERIMENT_ID,
+    SEED_STABILITY_DIR,
+    SOFT_DOMINANT,
+    SPLIT_CSV,
+    SPLIT_PARQUET,
+    TARGET,
+    TRAIN_NORM_JSON,
+    TRUST_ABLATION_CASES,
+    TUNE_OUT_DIR,
+    TUNED_EXPERIMENT_ID,
+    TUNED_HGBM_PARAMS,
+    TUNED_MODEL_PATH,
+    TUNED_ROUTER_EXPERIMENT_ID,
+    TUNED_ROUTER_PATH,
+    AblationCase,
+    FeatureSet,
+    experiment_id_for_feature_set,
+    feature_set_cvec_version,
+    feature_set_needs_embeddings,
+    feature_set_spec,
+    is_production_feature_set,
+    model_path_for_feature_set,
+    normalize_feature_set,
+)
 
-ROUTER_EXPERIMENT_ID = "hgbm_graph_emb_balanced"
-ROUTER_V2_EXPERIMENT_ID = "hgbm_graph_emb_v2_balanced"
-TUNED_EXPERIMENT_ID = "hgbm_graph_emb_tuned"
-ROUTER_MODEL_PATH = REPO_ROOT / "models/router" / f"{ROUTER_EXPERIMENT_ID}.joblib"
-TUNED_MODEL_PATH = REPO_ROOT / "models/router" / f"{TUNED_EXPERIMENT_ID}.joblib"
-
-TARGET = "oracle_agent"
-SOFT_DOMINANT = "soft_dominant_agent"
-AGENTS = ("react", "cot", "raw", "multiagent")
-PROBA_COLS = [f"p_{a}" for a in AGENTS]
-
-_LABELS_ROOT = Path("datasets/train_samples/v1")
-_SPLIT_CSV = {
-    "train": _LABELS_ROOT / "qce_train.csv",
-    "val": _LABELS_ROOT / "qce_val.csv",
-    "test": _LABELS_ROOT / "qce_internal_test.csv",
-}
-_SPLIT_PARQUET = {"train": "train", "val": "val", "test": "test"}
-_EMBEDDINGS_PARQUET = "datasets/qce_features/query_embeddings_{split}.parquet"
-EMBEDDING_COL_PREFIX = "emb_"
-
-TRAIN_NORM_JSON = REPO_ROOT / "models/qce_graph/train_norm.json"
-PCA_PATH = REPO_ROOT / "models/query_embeddings/pca_16.joblib"
-QCE_FEATURES_DIR = REPO_ROOT / "datasets/qce_features"
-DECOMPOSER_CACHE_DIR = REPO_ROOT / "datasets/decomposer_cache"
-EVAL_SAMPLES_DIR = REPO_ROOT / "datasets/eval_samples"
-TUNE_OUT_DIR = REPO_ROOT / "results/router_tuning"
-
-DATASET_ALIASES: dict[str, str] = {"mmlu": "mmlu_pro"}
-DEFAULT_AGENT_MODEL = "gpt-4o-mini"
+# Re-export config symbols for ``from routing.router import …`` callers.
+__all__ = [
+    "AGENTS",
+    "PROBA_COLS",
+    "PRODUCTION_FEATURE_SET",
+    "PRODUCTION_ROUTER_PATH",
+    "ROUTER_MODEL_PATH",
+    "TARGET",
+    "TUNED_ROUTER_PATH",
+    "load_router",
+    "load_router_frame",
+    "train_router",
+]
 
 try:
     from qce.complexity import C_VECTOR_COLS as _C_VECTOR_COLS
+    from qce.complexity import TRUST_SCALAR_COLS as _TRUST_SCALAR_COLS
 except ImportError:
     _C_VECTOR_COLS = (
         "dim_structural",
-        "dim_compositional",
-        "dim_retrieval",
-        "dim_verification",
-        "dim_uncertainty",
+        "dim_reasoning",
+        "dim_evidence",
+        "dim_tool",
+        "dim_coordination_uncertainty",
+    )
+    _TRUST_SCALAR_COLS = (
+        "plan_trust",
+        "verify_fraction",
+        "terminal_sink_ok",
+        "sink_intermediate_risk",
     )
 _C_VECTOR_COLS_V7 = (
     "dim7_structural",
@@ -87,21 +132,6 @@ _C_VECTOR_COLS_V7 = (
 )
 
 WeightMode = Literal["none", "balanced", "soft", "balanced_soft"]
-FeatureSet = Literal[
-    "graph_emb",
-    "graph",
-    "emb",
-    "graph_emb_nods",
-    "graph_emb_v2",
-    "graph_v2",
-]
-QCE_DATASETS = ("math", "hotpot", "musique")
-
-HGBM_GRID: dict[str, list[Any]] = {
-    "max_depth": [3, 5, 7],
-    "learning_rate": [0.03, 0.05, 0.1],
-    "max_leaf_nodes": [15, 31, 63],
-}
 
 class LabelEncodingClassifier(BaseEstimator, ClassifierMixin):
     """Encode string labels for estimators that need integer ``y``."""
@@ -162,9 +192,9 @@ def _register_label_encoding_for_unpickle() -> None:
 
 
 def query_embeddings_path(split: str, *, root: Path | None = None) -> Path:
-    if split not in _SPLIT_PARQUET:
-        raise ValueError(f"split must be one of {list(_SPLIT_PARQUET)}")
-    return Path(root or REPO_ROOT) / _EMBEDDINGS_PARQUET.format(split=_SPLIT_PARQUET[split])
+    if split not in SPLIT_PARQUET:
+        raise ValueError(f"split must be one of {list(SPLIT_PARQUET)}")
+    return Path(root or REPO_ROOT) / EMBEDDINGS_PARQUET.format(split=SPLIT_PARQUET[split])
 
 
 def embedding_feature_cols(df: pd.DataFrame) -> list[str]:
@@ -197,12 +227,12 @@ def load_split(
     root: Path | None = None,
     with_embeddings: bool | None = None,
 ) -> pd.DataFrame:
-    if split not in _SPLIT_CSV:
-        raise ValueError(f"split must be one of {list(_SPLIT_CSV)}")
+    if split not in SPLIT_CSV:
+        raise ValueError(f"split must be one of {list(SPLIT_CSV)}")
     root = Path(root or REPO_ROOT)
-    labels = pd.read_csv(root / _SPLIT_CSV[split])
+    labels = pd.read_csv(root / SPLIT_CSV[split])
     feats = pd.read_parquet(
-        root / "datasets/qce_features" / f"complexity_record_{_SPLIT_PARQUET[split]}.parquet"
+        root / "datasets/qce_features" / f"complexity_record_{SPLIT_PARQUET[split]}.parquet"
     )
     drop = [c for c in feats.columns if c in labels.columns and c != "training_id"]
     merged = labels.merge(
@@ -232,46 +262,53 @@ def c_vector_feature_cols(df: pd.DataFrame, *, version: int = 1) -> list[str]:
     return [c for c in cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
 
 
-def router_feature_cols(df: pd.DataFrame, feature_set: FeatureSet = "graph_emb") -> list[str]:
-    """Feature columns for a router variant (ablation / LODO)."""
-    emb = embedding_feature_cols(df)
-    use_dataset = feature_set in ("graph_emb", "graph", "emb", "graph_emb_v2", "graph_v2")
-    ds = ["dataset"] if use_dataset and "dataset" in df.columns else []
+def trust_scalar_feature_cols(df: pd.DataFrame) -> list[str]:
+    return [
+        c
+        for c in _TRUST_SCALAR_COLS
+        if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+    ]
 
-    if feature_set in ("graph_emb_v2", "graph_v2"):
-        graph = c_vector_feature_cols(df, version=2)
+
+def router_feature_cols(
+    df: pd.DataFrame, feature_set: FeatureSet = PRODUCTION_FEATURE_SET
+) -> list[str]:
+    """Resolve HGBM input columns for a feature-set id (see ``FEATURE_SET_SPECS``)."""
+    spec = feature_set_spec(feature_set)
+    cols: list[str] = []
+
+    if spec.cvec_version is not None:
+        graph = c_vector_feature_cols(df, version=spec.cvec_version)
+        label = "dim7_*" if spec.cvec_version == 2 else "dim_*"
         if not graph:
+            raise ValueError(f"missing {label} — rebuild complexity_record_*.parquet")
+        cols.extend(graph)
+
+    if spec.use_emb:
+        emb = embedding_feature_cols(df)
+        if not emb:
+            raise ValueError("missing emb_* — run scripts/build_query_embeddings.py --split all")
+        cols.extend(emb)
+
+    if spec.use_trust:
+        trust = trust_scalar_feature_cols(df)
+        if not trust:
             raise ValueError(
-                "missing dim7_* — rebuild complexity_record_*.parquet "
-                "(QCE c-vector-v2.0 after pulling graph.py changes)"
+                f"missing trust scalars {_TRUST_SCALAR_COLS} — rebuild complexity_record_*.parquet"
             )
-        if feature_set == "graph_emb_v2":
-            if not emb:
-                raise ValueError("missing emb_* — run build_query_embeddings.py --split all")
-            return graph + emb + ds
-        return graph + ds
+        cols.extend(trust)
 
-    graph = c_vector_feature_cols(df, version=1)
-    if feature_set == "graph_emb":
-        if not graph:
-            raise ValueError("missing dim_* — build complexity_record_*.parquet first")
-        if not emb:
-            raise ValueError("missing emb_* — run build_query_embeddings.py --split all")
-        return graph + emb + ds
-    if feature_set == "graph":
-        if not graph:
-            raise ValueError("missing dim_*")
-        return graph + ds
-    if feature_set == "emb":
-        if not emb:
-            raise ValueError("missing emb_*")
-        return emb + ds
-    if feature_set == "graph_emb_nods":
-        graph_nods = c_vector_feature_cols(df, version=1)
-        if not graph_nods or not emb:
-            raise ValueError("graph_emb_nods requires dim_* and emb_*")
-        return graph_nods + emb
-    raise ValueError(f"unknown feature_set {feature_set!r}")
+    if spec.use_dataset:
+        if "dataset" not in df.columns:
+            raise ValueError("missing dataset column")
+        cols.append("dataset")
+
+    return cols
+
+
+def validate_feature_set_data(df: pd.DataFrame, feature_set: str) -> None:
+    """Ensure parquet columns exist for ``feature_set`` (call after ``load_split``)."""
+    router_feature_cols(df, feature_set)
 
 
 resolve_feature_cols = router_feature_cols
@@ -558,14 +595,15 @@ def fit_router(
 
 @dataclass(frozen=True)
 class TrainSpec:
-    experiment_id: str = ROUTER_EXPERIMENT_ID
-    feature_set: FeatureSet = "graph_emb"
+    experiment_id: str = PRODUCTION_ROUTER_EXPERIMENT_ID
+    feature_set: FeatureSet = PRODUCTION_FEATURE_SET
     weight_mode: WeightMode = "balanced"
     oversample: bool = False
     target: str = TARGET
     use_class_weight: bool = True
     hgbm_params: dict[str, Any] | None = None
     calibrated: bool = False
+    random_state: int = 42
 
     @property
     def effective_class_weight(self) -> str | None:
@@ -772,6 +810,7 @@ def train_and_evaluate(
         class_weight=spec.effective_class_weight,
         hgbm_params=spec.hgbm_params,
         calibrated=spec.calibrated,
+        random_state=spec.random_state,
     )
     fit_router(pipe, fit_df, feature_cols, target=spec.target, sample_weight=weights)
     val_result = evaluate(pipe, val_df, feature_cols, target=spec.target)
@@ -781,6 +820,7 @@ def train_and_evaluate(
             class_weight=spec.effective_class_weight,
             hgbm_params=spec.hgbm_params,
             calibrated=False,
+            random_state=spec.random_state,
         ),
         train_df,
         feature_cols,
@@ -842,7 +882,7 @@ def train_router(
         results_row(
             spec.experiment_id,
             val_res,
-            feature_set=spec.feature_set,
+            feature_set=normalize_feature_set(spec.feature_set),
             n_features=len(feature_cols),
             model="hgbm",
             weight_mode=spec.weight_mode,
@@ -881,6 +921,7 @@ def save_router(
 ) -> Path:
     path = Path(path or REPO_ROOT / "models/router" / f"{experiment_id}.joblib")
     path.parent.mkdir(parents=True, exist_ok=True)
+    meta = dict(extra_meta or {})
     joblib.dump(
         {
             "pipeline": pipe,
@@ -888,6 +929,9 @@ def save_router(
             "target": TARGET,
             "agents": list(AGENTS),
             "experiment_id": experiment_id,
+            "feature_set": meta.get("feature_set"),
+            "hgbm_params": meta.get("hgbm_params"),
+            "production": meta.get("production", False),
         },
         path,
     )
@@ -1053,32 +1097,32 @@ def _tune_hgbm_cv(train_df: pd.DataFrame, feature_cols: list[str], *, cv: int = 
 
 
 def _cli_train(args: argparse.Namespace) -> None:
-    fs: FeatureSet = getattr(args, "feature_set", "graph_emb")
-    train_df = load_split("train", with_embeddings=True)
-    val_df = load_split("val", with_embeddings=True)
-    if fs in ("graph_emb", "graph_emb_v2") and not embedding_feature_cols(train_df):
-        raise FileNotFoundError("Missing embeddings — run scripts/build_query_embeddings.py --split all")
-    if fs in ("graph_emb_v2", "graph_v2") and not c_vector_feature_cols(train_df, version=2):
-        raise ValueError(
-            "missing dim7_* — rebuild QCE complexity parquets "
-            "(re-run decompose/graph pipeline for train/val/test)"
-        )
+    fs: FeatureSet = getattr(args, "feature_set", PRODUCTION_FEATURE_SET)
+    needs_emb = feature_set_needs_embeddings(fs)
+    train_df = load_split("train", with_embeddings=needs_emb)
+    val_df = load_split("val", with_embeddings=needs_emb)
+    validate_feature_set_data(train_df, fs)
+    fs_norm = normalize_feature_set(fs)
     spec = TrainSpec(
-        experiment_id=ROUTER_V2_EXPERIMENT_ID if fs == "graph_emb_v2" else ROUTER_EXPERIMENT_ID,
+        experiment_id=experiment_id_for_feature_set(fs),
         feature_set=fs,
+        hgbm_params=PRODUCTION_HGBM_PARAMS if is_production_feature_set(fs) else None,
     )
     pipe, feature_cols, val_res, (cv_mean, cv_std), _ = train_router(
         train_df, val_df, spec=spec, verbose=not args.quiet
     )
     if not args.quiet:
-        print(f"feature_set={fs} n_features={len(feature_cols)}")
+        print(f"feature_set={normalize_feature_set(fs)} n_features={len(feature_cols)}")
         print(predict_agent_proba(pipe, val_df, feature_cols).head(3).to_string())
     if args.save:
-        exp_id = spec.experiment_id
-        out_path = {
-            "graph_emb_v2": REPO_ROOT / "models/router/hgbm_graph_emb_v2_balanced.joblib",
-            "graph_v2": REPO_ROOT / "models/router/hgbm_graph_v2_balanced.joblib",
-        }.get(fs, ROUTER_MODEL_PATH)
+        out_path = model_path_for_feature_set(fs)
+        from routing.config import LEGACY_HARD_HGBM_EXPERIMENT_ID
+
+        exp_id = (
+            LEGACY_HARD_HGBM_EXPERIMENT_ID
+            if is_production_feature_set(fs)
+            else experiment_id_for_feature_set(fs)
+        )
         out = save_router(
             pipe,
             feature_cols=feature_cols,
@@ -1087,7 +1131,9 @@ def _cli_train(args: argparse.Namespace) -> None:
             extra_meta={
                 "val_macro_f1": val_res.macro_f1,
                 "train_cv_macro_f1": cv_mean,
-                "feature_set": fs,
+                "feature_set": fs_norm,
+                "hgbm_params": "default" if spec.hgbm_params is None else spec.hgbm_params,
+                "production": is_production_feature_set(fs),
             },
         )
         print("Saved", out)
@@ -1099,6 +1145,10 @@ def _cli_eval(args: argparse.Namespace) -> None:
     train_df = load_split("train", with_embeddings=True)
     eval_df = load_split(args.split, with_embeddings=True)
     obj = load_router(args.router)
+    meta_path = Path(args.router).with_suffix(".json")
+    feature_set_label = obj.get("feature_set")
+    if not feature_set_label and meta_path.is_file():
+        feature_set_label = json.loads(meta_path.read_text(encoding="utf-8")).get("feature_set")
     result = evaluate(obj["pipeline"], eval_df, list(obj["feature_cols"]))
     rows = [
         results_row("B0_always_raw", baseline_always_majority(train_df, eval_df)),
@@ -1106,7 +1156,7 @@ def _cli_eval(args: argparse.Namespace) -> None:
         results_row(
             str(obj.get("experiment_id", args.router.stem)),
             result,
-            feature_set="graph_emb",
+            feature_set=str(feature_set_label or PRODUCTION_FEATURE_SET),
             n_features=len(obj["feature_cols"]),
             model="hgbm",
         ),
@@ -1128,34 +1178,45 @@ def run_feature_ablation(
     out_dir: Path | None = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """Train/eval emb-only, graph-only, and full (graph+emb) on the same splits."""
-    out_dir = Path(out_dir or REPO_ROOT / "results/experiments/feature_ablation")
+    """Legacy entrypoint — runs the 5-dim (cvec5) ablation table."""
+    return run_ablation_cvec5(eval_split=eval_split, out_dir=out_dir, verbose=verbose)
+
+
+def _run_ablation_table(
+    cases: tuple[AblationCase, ...],
+    *,
+    track: str,
+    eval_split: str = "test",
+    out_dir: Path | None = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    out_dir = Path(out_dir or REPO_ROOT / f"results/experiments/feature_ablation_{track}")
     out_dir.mkdir(parents=True, exist_ok=True)
     train_df = load_split("train", with_embeddings=True)
     val_df = load_split("val", with_embeddings=True)
     eval_df = load_split(eval_split, with_embeddings=True)
 
-    specs: list[tuple[str, FeatureSet]] = [
-        ("emb_only", "emb"),
-        ("graph_only", "graph"),
-        ("graph_plus_emb", "graph_emb"),
-        ("graph_v2_only", "graph_v2"),
-        ("graph_v2_plus_emb", "graph_emb_v2"),
-    ]
     rows: list[dict[str, Any]] = []
-    for name, fs in specs:
-        spec = TrainSpec(experiment_id=f"hgbm_{name}", feature_set=fs)
+    for case in cases:
+        fs = normalize_feature_set(case.feature_set)
+        exp_id = f"hgbm_{track}_{case.label.replace('+', '_').replace(' ', '_').replace('(', '').replace(')', '')}"
+        spec = TrainSpec(experiment_id=exp_id, feature_set=case.feature_set)
         if verbose:
-            print(f"\n=== Ablation: {name} ({fs}) ===")
+            print(f"\n=== [{track}] {case.label} ({fs}) ===")
+            if case.description:
+                print(f"    {case.description}")
         pipe, fcols, val_res, (cv_mean, cv_std), _ = train_router(
             train_df, val_df, spec=spec, verbose=verbose
         )
         test_res = evaluate(pipe, eval_df, fcols)
         rows.append(
             {
+                "track": track,
+                "label": case.label,
                 "feature_set": fs,
-                "name": name,
+                "description": case.description,
                 "n_features": len(fcols),
+                "feature_cols": ",".join(fcols),
                 "val_macro_f1": round(val_res.macro_f1, 4),
                 "val_accuracy": round(val_res.accuracy, 4),
                 f"{eval_split}_macro_f1": round(test_res.macro_f1, 4),
@@ -1168,9 +1229,192 @@ def run_feature_ablation(
     path = out_dir / f"ablation_{eval_split}.csv"
     table.to_csv(path, index=False)
     if verbose:
-        print(f"\n=== Feature ablation ({eval_split}) ===\n{table.to_string(index=False)}")
+        show = table.drop(columns=["feature_cols", "description"], errors="ignore")
+        print(f"\n=== Ablation [{track}] ({eval_split}) ===\n{show.to_string(index=False)}")
         print(f"Wrote {path}")
     return table
+
+
+def run_ablation_cvec5(
+    *,
+    eval_split: str = "test",
+    out_dir: Path | None = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    return _run_ablation_table(
+        CVEC5_ABLATION_CASES,
+        track="cvec5",
+        eval_split=eval_split,
+        out_dir=out_dir or REPO_ROOT / "results/experiments/feature_ablation_cvec5",
+        verbose=verbose,
+    )
+
+
+def run_ablation_cvec7(
+    *,
+    eval_split: str = "test",
+    out_dir: Path | None = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    return _run_ablation_table(
+        CVEC7_ABLATION_CASES,
+        track="cvec7",
+        eval_split=eval_split,
+        out_dir=out_dir or REPO_ROOT / "results/experiments/feature_ablation_cvec7",
+        verbose=verbose,
+    )
+
+
+def run_ablation_trust(
+    *,
+    eval_split: str = "test",
+    out_dir: Path | None = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    return _run_ablation_table(
+        TRUST_ABLATION_CASES,
+        track="trust",
+        eval_split=eval_split,
+        out_dir=out_dir or REPO_ROOT / "results/experiments/feature_ablation_trust",
+        verbose=verbose,
+    )
+
+
+def run_ablation_all(
+    *,
+    eval_split: str = "test",
+    verbose: bool = True,
+) -> dict[str, pd.DataFrame]:
+    return {
+        "cvec5": run_ablation_cvec5(eval_split=eval_split, verbose=verbose),
+        "cvec7": run_ablation_cvec7(eval_split=eval_split, verbose=verbose),
+        "trust": run_ablation_trust(eval_split=eval_split, verbose=verbose),
+    }
+
+
+def _fit_eval_split(
+    train_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    *,
+    feature_set: FeatureSet,
+    hgbm_params: dict[str, Any] | None,
+    random_state: int,
+) -> tuple[EvalResult, list[str]]:
+    """Train on train split only; score ``eval_df`` (val or test)."""
+    spec = TrainSpec(
+        experiment_id="seed_stability",
+        feature_set=feature_set,
+        hgbm_params=hgbm_params,
+        random_state=random_state,
+    )
+    feature_cols = router_feature_cols(train_df, spec.feature_set)
+    fit_df = oversample_minorities(train_df, spec.target) if spec.oversample else train_df
+    y_fit = fit_df[spec.target].astype(str)
+    weights = compute_sample_weights(fit_df, y_fit, spec.weight_mode)
+    pipe = make_pipeline(
+        feature_cols,
+        class_weight=spec.effective_class_weight,
+        hgbm_params=spec.hgbm_params,
+        random_state=spec.random_state,
+    )
+    fit_router(pipe, fit_df, feature_cols, target=spec.target, sample_weight=weights)
+    return evaluate(pipe, eval_df, feature_cols, target=spec.target), feature_cols
+
+
+def run_seed_stability(
+    *,
+    feature_set: FeatureSet = PRODUCTION_FEATURE_SET,
+    eval_split: str = "test",
+    seeds: tuple[int, ...] = (42, 123, 456, 789, 2024),
+    out_dir: Path | None = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Compare default vs tuned HGBM on ``feature_set`` across random seeds.
+
+    Trains on the train split only; reports macro-F1 on ``eval_split`` (default test).
+    """
+    out_dir = Path(out_dir or SEED_STABILITY_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    train_df = load_split("train", with_embeddings=True)
+    eval_df = load_split(eval_split, with_embeddings=True)
+    feature_cols = router_feature_cols(train_df, feature_set)
+
+    configs: tuple[tuple[str, dict[str, Any] | None], ...] = (
+        ("default", DEFAULT_HGBM_PARAMS),
+        ("tuned", TUNED_HGBM_PARAMS),
+    )
+
+    rows: list[dict[str, Any]] = []
+    for config_name, hgbm_params in configs:
+        for seed in seeds:
+            result, _ = _fit_eval_split(
+                train_df,
+                eval_df,
+                feature_set=feature_set,
+                hgbm_params=hgbm_params,
+                random_state=seed,
+            )
+            rows.append(
+                {
+                    "config": config_name,
+                    "seed": seed,
+                    "feature_set": normalize_feature_set(feature_set),
+                    "n_features": len(feature_cols),
+                    f"{eval_split}_macro_f1": round(result.macro_f1, 4),
+                    f"{eval_split}_accuracy": round(result.accuracy, 4),
+                }
+            )
+            if verbose:
+                print(
+                    f"  {config_name} seed={seed} "
+                    f"{eval_split} macro-F1={result.macro_f1:.4f} acc={result.accuracy:.4f}"
+                )
+
+    per_seed = pd.DataFrame(rows)
+    per_seed_path = out_dir / f"per_seed_{eval_split}.csv"
+    per_seed.to_csv(per_seed_path, index=False)
+
+    summary_rows: list[dict[str, Any]] = []
+    for config_name, _ in configs:
+        sub = per_seed[per_seed["config"] == config_name]
+        f1_col = f"{eval_split}_macro_f1"
+        acc_col = f"{eval_split}_accuracy"
+        summary_rows.append(
+            {
+                "config": config_name,
+                "n_seeds": len(sub),
+                f"{eval_split}_macro_f1_mean": round(float(sub[f1_col].mean()), 4),
+                f"{eval_split}_macro_f1_std": round(float(sub[f1_col].std(ddof=0)), 4),
+                f"{eval_split}_accuracy_mean": round(float(sub[acc_col].mean()), 4),
+                f"{eval_split}_accuracy_std": round(float(sub[acc_col].std(ddof=0)), 4),
+            }
+        )
+    summary = pd.DataFrame(summary_rows)
+    summary_path = out_dir / f"summary_{eval_split}.csv"
+    summary.to_csv(summary_path, index=False)
+
+    if verbose:
+        print(f"\n=== Seed stability ({feature_set}, {eval_split}, n={len(seeds)}) ===")
+        for _, row in summary.iterrows():
+            print(
+                f"  {row['config']:8s}  "
+                f"macro-F1 {row[f'{eval_split}_macro_f1_mean']:.3f} "
+                f"± {row[f'{eval_split}_macro_f1_std']:.3f}  "
+                f"(acc {row[f'{eval_split}_accuracy_mean']:.3f} "
+                f"± {row[f'{eval_split}_accuracy_std']:.3f})"
+            )
+        d = summary[summary["config"] == "default"][f"{eval_split}_macro_f1_mean"].iloc[0]
+        t = summary[summary["config"] == "tuned"][f"{eval_split}_macro_f1_mean"].iloc[0]
+        dd = summary[summary["config"] == "default"][f"{eval_split}_macro_f1_std"].iloc[0]
+        td = summary[summary["config"] == "tuned"][f"{eval_split}_macro_f1_std"].iloc[0]
+        print(
+            f"\n  Δ tuned−default (mean): {t - d:+.4f}  "
+            f"(overlap if |Δ| < {dd + td:.4f} ≈ combined spread)"
+        )
+        print(f"Wrote {per_seed_path}\nWrote {summary_path}")
+
+    return per_seed, summary
 
 
 def run_leave_one_dataset_out(
@@ -1183,7 +1427,7 @@ def run_leave_one_dataset_out(
     """
     Hold out one benchmark dataset: train on the other datasets, eval on held-out rows.
 
-    Default ``graph_emb_nods`` (no dataset one-hot) tests that C(Q)+emb generalize
+    Default ``cvec5_emb`` (no dataset one-hot) tests that C(Q)+emb generalize
     beyond benchmark identity.
     """
     out_dir = Path(out_dir or REPO_ROOT / "results/experiments/lodo")
@@ -1191,7 +1435,7 @@ def run_leave_one_dataset_out(
     train_all = load_split("train", with_embeddings=True)
     val_all = load_split("val", with_embeddings=True)
     eval_all = load_split(eval_split, with_embeddings=True)
-    fs: FeatureSet = "graph_emb" if include_dataset_feature else "graph_emb_nods"
+    fs: FeatureSet = "cvec5_emb_ds" if include_dataset_feature else "cvec5_emb"
 
     rows: list[dict[str, Any]] = []
     for held in QCE_DATASETS:
@@ -1248,10 +1492,14 @@ def _cli_tune(args: argparse.Namespace) -> None:
         top2_sweep,
     )
 
-    train_df = load_split("train", with_embeddings=True)
-    val_df = load_split("val", with_embeddings=True)
-    test_df = load_split("test", with_embeddings=True)
-    feature_cols = router_feature_cols(train_df)
+    fs: FeatureSet = getattr(args, "feature_set", PRODUCTION_FEATURE_SET)
+    needs_emb = feature_set_needs_embeddings(fs)
+    train_df = load_split("train", with_embeddings=needs_emb)
+    val_df = load_split("val", with_embeddings=needs_emb)
+    test_df = load_split("test", with_embeddings=needs_emb)
+    validate_feature_set_data(train_df, fs)
+    fs_norm = normalize_feature_set(fs)
+    feature_cols = router_feature_cols(train_df, fs)
     TUNE_OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.skip_grid:
@@ -1263,10 +1511,17 @@ def _cli_tune(args: argparse.Namespace) -> None:
         if len(grid_df):
             grid_df.to_csv(TUNE_OUT_DIR / "hgbm_grid_cv.csv", index=False)
 
-    spec = TrainSpec(experiment_id=TUNED_EXPERIMENT_ID, hgbm_params=best_params)
+    tuned_exp = (
+        TUNED_ROUTER_EXPERIMENT_ID
+        if is_production_feature_set(fs)
+        else f"{TUNED_EXPERIMENT_ID}_{fs_norm}"
+    )
+    spec = TrainSpec(experiment_id=tuned_exp, feature_set=fs, hgbm_params=best_params)
     pipe, fcols, val_res, (cv_mean, _), _ = train_router(train_df, val_df, spec=spec)
     summary = {
-        "experiment_id": TUNED_EXPERIMENT_ID,
+        "experiment_id": tuned_exp,
+        "feature_set": fs_norm,
+        "comparison_only": is_production_feature_set(fs),
         "hgbm_best_params": best_params,
         "val": {"macro_f1": val_res.macro_f1, "accuracy": val_res.accuracy},
         "test": {
@@ -1276,25 +1531,58 @@ def _cli_tune(args: argparse.Namespace) -> None:
         "train_cv_macro_f1": cv_mean,
     }
     if args.save:
-        save_router(pipe, feature_cols=fcols, experiment_id=TUNED_EXPERIMENT_ID, path=TUNED_MODEL_PATH)
-        print("Saved", TUNED_MODEL_PATH)
+        tuned_path = (
+            TUNED_ROUTER_PATH
+            if is_production_feature_set(fs)
+            else model_path_for_feature_set(fs).parent / f"{tuned_exp}.joblib"
+        )
+        save_router(
+            pipe,
+            feature_cols=fcols,
+            experiment_id=tuned_exp,
+            path=tuned_path,
+            extra_meta={
+                "feature_set": fs_norm,
+                "hgbm_params": best_params,
+                "val_macro_f1": val_res.macro_f1,
+                "train_cv_macro_f1": cv_mean,
+                "comparison_only": is_production_feature_set(fs),
+            },
+        )
+        print("Saved", tuned_path)
     if args.calibrated:
-        cal_spec = TrainSpec(experiment_id=f"{TUNED_EXPERIMENT_ID}_calibrated", hgbm_params=best_params, calibrated=True)
+        cal_spec = TrainSpec(
+            experiment_id=f"{tuned_exp}_calibrated",
+            feature_set=fs,
+            hgbm_params=best_params,
+            calibrated=True,
+        )
         cal_pipe, cal_fcols, _, _, _ = train_router(train_df, val_df, spec=cal_spec)
         if args.save:
-            save_router(cal_pipe, feature_cols=cal_fcols, experiment_id=f"{TUNED_EXPERIMENT_ID}_calibrated")
+            cal_path = model_path_for_feature_set(fs).parent / f"{tuned_exp}_calibrated.joblib"
+            save_router(
+                cal_pipe,
+                feature_cols=cal_fcols,
+                experiment_id=f"{tuned_exp}_calibrated",
+                path=cal_path,
+            )
 
-    analysis = build_analysis_frame("val", pipe=pipe, feature_cols=fcols, experiment_id=TUNED_EXPERIMENT_ID)
-    top2_sweep(analysis).to_csv(TUNE_OUT_DIR / "top2_sweep_val.csv", index=False)
-    router_confidence_sweep(analysis).to_csv(TUNE_OUT_DIR / "confidence_sweep_val.csv", index=False)
-    plot_reliability_calibration(analysis, TUNE_OUT_DIR / "calibration_val.png", title_suffix=f" ({TUNED_EXPERIMENT_ID}, val)")
+    analysis = build_analysis_frame("val", pipe=pipe, feature_cols=fcols, experiment_id=tuned_exp)
+    top2_sweep(analysis).to_csv(TUNE_OUT_DIR / f"top2_sweep_val_{fs}.csv", index=False)
+    router_confidence_sweep(analysis).to_csv(TUNE_OUT_DIR / f"confidence_sweep_val_{fs}.csv", index=False)
+    plot_reliability_calibration(analysis, TUNE_OUT_DIR / f"calibration_val_{fs}.png", title_suffix=f" ({tuned_exp}, val)")
     (TUNE_OUT_DIR / "tuning_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="G3 graph_emb router")
+    parser = argparse.ArgumentParser(description="QCE router (HGBM)")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    fs_help = (
+        "Feature columns for the router. Prefer cvec5_* / cvec7_* names; "
+        "graph_* names are legacy aliases."
+    )
 
     p_train = sub.add_parser("train", help="Train on QCE train/val")
     p_train.add_argument("--save", action="store_true")
@@ -1302,9 +1590,9 @@ def main(argv: list[str] | None = None) -> None:
     p_train.add_argument(
         "--feature-set",
         dest="feature_set",
-        choices=("graph_emb", "graph_emb_v2", "graph", "graph_v2", "emb"),
-        default="graph_emb",
-        help="graph_emb=v1 (5 dim_*); graph_emb_v2=experiment 2 (7 dim7_* + emb)",
+        choices=FEATURE_SET_CLI_CHOICES,
+        default=PRODUCTION_FEATURE_SET,
+        help=fs_help,
     )
 
     p_eval = sub.add_parser("eval", help="Evaluate on QCE val/test vs baselines")
@@ -1312,14 +1600,30 @@ def main(argv: list[str] | None = None) -> None:
     p_eval.add_argument("--router", type=Path, default=ROUTER_MODEL_PATH)
     p_eval.add_argument("--json-out", type=Path, default=None)
 
-    p_tune = sub.add_parser("tune", help="Small HGBM grid + save tuned model")
+    p_tune = sub.add_parser(
+        "tune",
+        help="HGBM grid search (saves comparison model; production uses default HGBM)",
+    )
     p_tune.add_argument("--save", action="store_true")
     p_tune.add_argument("--skip-grid", action="store_true")
     p_tune.add_argument("--cv", type=int, default=5)
     p_tune.add_argument("--calibrated", action="store_true")
+    p_tune.add_argument(
+        "--feature-set",
+        dest="feature_set",
+        choices=FEATURE_SET_CLI_CHOICES,
+        default=PRODUCTION_FEATURE_SET,
+        help=f"Feature set to tune (comparison; production={PRODUCTION_FEATURE_SET}).",
+    )
 
-    p_abl = sub.add_parser("ablation", help="emb / graph / graph+emb ablation (Table)")
+    p_abl = sub.add_parser("ablation", help="Feature ablation tables (cvec5 / cvec7 / trust)")
     p_abl.add_argument("--split", choices=("val", "test"), default="test")
+    p_abl.add_argument(
+        "--track",
+        choices=("cvec5", "cvec7", "trust", "all"),
+        default="all",
+        help="Which ablation table to run (default: all three)",
+    )
     p_abl.add_argument("--out-dir", type=Path, default=None)
     p_abl.add_argument("--quiet", action="store_true")
 
@@ -1329,9 +1633,30 @@ def main(argv: list[str] | None = None) -> None:
     p_lodo.add_argument(
         "--with-dataset",
         action="store_true",
-        help="Include dataset one-hot (default: graph+emb only, no dataset)",
+        help="Include dataset one-hot (default: cvec5+emb only, no dataset)",
     )
     p_lodo.add_argument("--quiet", action="store_true")
+
+    p_seed = sub.add_parser(
+        "seed-sweep",
+        help="Default vs tuned HGBM across random seeds (freeze check)",
+    )
+    p_seed.add_argument("--split", choices=("val", "test"), default="test")
+    p_seed.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[42, 123, 456, 789, 2024],
+        help="Random seeds (default: 5 seeds)",
+    )
+    p_seed.add_argument("--out-dir", type=Path, default=None)
+    p_seed.add_argument(
+        "--feature-set",
+        dest="feature_set",
+        default=PRODUCTION_FEATURE_SET,
+        choices=FEATURE_SET_CLI_CHOICES,
+    )
+    p_seed.add_argument("--quiet", action="store_true")
 
     args = parser.parse_args(argv)
     if args.cmd == "train":
@@ -1341,16 +1666,39 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "tune":
         _cli_tune(args)
     elif args.cmd == "ablation":
-        run_feature_ablation(
-            eval_split=args.split,
-            out_dir=args.out_dir,
-            verbose=not args.quiet,
-        )
+        if args.track == "cvec5":
+            run_ablation_cvec5(
+                eval_split=args.split,
+                out_dir=args.out_dir,
+                verbose=not args.quiet,
+            )
+        elif args.track == "cvec7":
+            run_ablation_cvec7(
+                eval_split=args.split,
+                out_dir=args.out_dir,
+                verbose=not args.quiet,
+            )
+        elif args.track == "trust":
+            run_ablation_trust(
+                eval_split=args.split,
+                out_dir=args.out_dir,
+                verbose=not args.quiet,
+            )
+        else:
+            run_ablation_all(eval_split=args.split, verbose=not args.quiet)
     elif args.cmd == "lodo":
         run_leave_one_dataset_out(
             eval_split=args.split,
             out_dir=args.out_dir,
             include_dataset_feature=args.with_dataset,
+            verbose=not args.quiet,
+        )
+    elif args.cmd == "seed-sweep":
+        run_seed_stability(
+            feature_set=args.feature_set,
+            eval_split=args.split,
+            seeds=tuple(args.seeds),
+            out_dir=args.out_dir,
             verbose=not args.quiet,
         )
 

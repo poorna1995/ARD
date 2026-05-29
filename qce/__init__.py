@@ -36,6 +36,7 @@ from qce.complexity import (
 from qce.graph import complexity_graph_score
 from qce.graph import (
     C_VECTOR_VER_V2,
+    DIM5_LEGACY_COLS,
     DIM7_COLS,
     DIM_COLS,
     GraphBuildResult,
@@ -52,6 +53,7 @@ __all__ = [
     "C_VECTOR_VER",
     "C_VECTOR_VER_V2",
     "DIM7_COLS",
+    "DIM5_LEGACY_COLS",
     "DIM_COLS",
     "ROUTER_MAIN_FEATURE_SET",
     "SCALAR_COL",

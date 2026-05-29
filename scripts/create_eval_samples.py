@@ -21,9 +21,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.data.gaia_loader import append_attachment_to_query  # noqa: E402
-from src.data.mmlu_pro_loader import append_options_to_query  # noqa: E402
-from src.utils.train_samples import (  # noqa: E402
+from src.data.gaia_loader import append_attachment_to_query 
+from src.data.mmlu_pro_loader import append_options_to_query 
+from src.utils.train_samples import ( 
     EVAL_N,
     sample_gaia,
     sample_hotpot,
