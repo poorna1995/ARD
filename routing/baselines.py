@@ -36,6 +36,7 @@ from routing.config import (
     PRODUCTION_FEATURE_SET,
     LEGACY_HARD_HGBM_PATH,
     REPO_ROOT,
+    normalize_feature_set,
 )
 from routing.router import (
     TARGET,
@@ -45,6 +46,7 @@ from routing.router import (
     evaluate,
     load_router,
     load_split,
+    load_split_for_feature_set,
     router_feature_cols,
     validate_feature_set_data,
 )
@@ -257,6 +259,7 @@ def _exec_metrics_row(
     label_eval: Any,
     exec_metrics: Any,
     tree_backend: str | None = None,
+    feature_set: str = PRODUCTION_FEATURE_SET,
 ) -> dict[str, Any]:
     """One comparison-table row: label diagnostics + execution / regret from oracle."""
     return {
@@ -264,7 +267,7 @@ def _exec_metrics_row(
         "hp_policy": hp_policy,
         "split": split,
         "experiment_id": experiment_id,
-        "feature_set": PRODUCTION_FEATURE_SET,
+        "feature_set": normalize_feature_set(feature_set),
         "n_features": len(feature_cols),
         "n": exec_metrics.n,
         "utility_lambda": DEFAULT_UTILITY_LAMBDA,
@@ -299,13 +302,15 @@ def eval_pipeline_on_split(
     experiment_id: str,
     oracle_path: Path = DEFAULT_ORACLE,
     tree_backend: str | None = None,
+    feature_set: str = PRODUCTION_FEATURE_SET,
 ) -> dict[str, Any]:
     """
     Score a fitted sklearn pipeline on a split.
 
     Flow: load split → predict agent → merge oracle execution → label F1 + regret.
     """
-    df = load_split(split, with_embeddings=True)
+    fs = normalize_feature_set(feature_set)
+    df = load_split_for_feature_set(split, fs)
     outcomes = oracle_outcome_matrix(oracle_path, df["training_id"])
     df = attach_router_predictions(df, pipe, feature_cols, experiment_id=experiment_id)
     df = attach_outcomes(df, outcomes)
@@ -320,6 +325,7 @@ def eval_pipeline_on_split(
         label_eval=label_eval,
         exec_metrics=exec_metrics,
         tree_backend=tree_backend,
+        feature_set=fs,
     )
 
 

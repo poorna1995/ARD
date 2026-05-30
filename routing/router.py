@@ -68,8 +68,12 @@ from routing.config import (
     ROUTER_V2_EXPERIMENT_ID,
     SEED_STABILITY_DIR,
     SOFT_DOMINANT,
+    HEURISTICS_PARQUET,
+    HEURISTIC_COL_PREFIX,
     SPLIT_CSV,
     SPLIT_PARQUET,
+    feature_set_needs_embeddings,
+    feature_set_needs_heuristics,
     TARGET,
     TRAIN_NORM_JSON,
     TRUST_ABLATION_CASES,
@@ -221,11 +225,66 @@ def load_query_embeddings(split: str, *, root: Path | None = None) -> pd.DataFra
     return emb[["training_id", *embedding_feature_cols(emb)]].copy()
 
 
+def query_heuristics_path(split: str, *, root: Path | None = None) -> Path:
+    if split not in SPLIT_PARQUET:
+        raise ValueError(f"split must be one of {list(SPLIT_PARQUET)}")
+    return Path(root or REPO_ROOT) / HEURISTICS_PARQUET.format(split=SPLIT_PARQUET[split])
+
+
+def heuristic_feature_cols(df: pd.DataFrame) -> list[str]:
+    """Return ``heur_*`` columns in canonical build order when complete."""
+    present = [
+        c
+        for c in df.columns
+        if c.startswith(HEURISTIC_COL_PREFIX) and pd.api.types.is_numeric_dtype(df[c])
+    ]
+    if not present:
+        return []
+
+    try:
+        import sys
+
+        old = REPO_ROOT / "old"
+        if str(old) not in sys.path:
+            sys.path.insert(0, str(old))
+        from difficulty.feature_measure import HEUR_ROUTER_COLS
+
+        ordered = [c for c in HEUR_ROUTER_COLS if c in df.columns]
+        if len(ordered) == len(HEUR_ROUTER_COLS):
+            return ordered
+        missing = [c for c in HEUR_ROUTER_COLS if c not in df.columns]
+        raise ValueError(
+            f"heuristic parquet missing {len(missing)} columns (e.g. {missing[:3]}); "
+            "re-run scripts/build_query_heuristics.py --split all"
+        )
+    except ValueError:
+        raise
+    except Exception:
+        pass
+
+    def _key(name: str) -> tuple[int, str]:
+        suffix = name[len(HEURISTIC_COL_PREFIX) :]
+        return (int(suffix), name) if suffix.isdigit() else (10**9, name)
+
+    return sorted(present, key=_key)
+
+
+def load_query_heuristics(split: str, *, root: Path | None = None) -> pd.DataFrame:
+    path = query_heuristics_path(split, root=root)
+    if not path.is_file():
+        raise FileNotFoundError(f"missing query heuristics: {path}")
+    heur = pd.read_parquet(path)
+    if "training_id" not in heur.columns:
+        raise ValueError(f"{path}: missing training_id")
+    return heur[["training_id", *heuristic_feature_cols(heur)]].copy()
+
+
 def load_split(
     split: str,
     *,
     root: Path | None = None,
     with_embeddings: bool | None = None,
+    with_heuristics: bool | None = None,
 ) -> pd.DataFrame:
     if split not in SPLIT_CSV:
         raise ValueError(f"split must be one of {list(SPLIT_CSV)}")
@@ -251,10 +310,37 @@ def load_split(
             on="training_id",
             how="inner",
         )
+    heur_path = query_heuristics_path(split, root=root)
+    if with_heuristics is None:
+        with_heuristics = heur_path.is_file()
+    if with_heuristics:
+        heur = load_query_heuristics(split, root=root)
+        drop_h = [c for c in heur.columns if c in merged.columns and c != "training_id"]
+        merged = merged.merge(
+            heur.drop(columns=[c for c in drop_h if c in heur.columns], errors="ignore"),
+            on="training_id",
+            how="inner",
+        )
     merged = merged[merged[TARGET].isin(AGENTS)].copy()
     if merged.empty:
         raise ValueError(f"{split}: no rows after filtering to {AGENTS}")
     return merged.reset_index(drop=True)
+
+
+def load_split_for_feature_set(
+    split: str,
+    feature_set: str,
+    *,
+    root: Path | None = None,
+) -> pd.DataFrame:
+    """Load labels + complexity + optional emb/heur columns required by ``feature_set``."""
+    fs = normalize_feature_set(feature_set)
+    return load_split(
+        split,
+        root=root,
+        with_embeddings=feature_set_needs_embeddings(fs),
+        with_heuristics=feature_set_needs_heuristics(fs),
+    )
 
 
 def c_vector_feature_cols(df: pd.DataFrame, *, version: int = 1) -> list[str]:
@@ -274,7 +360,7 @@ def router_feature_cols(
     df: pd.DataFrame, feature_set: FeatureSet = PRODUCTION_FEATURE_SET
 ) -> list[str]:
     """Resolve HGBM input columns for a feature-set id (see ``FEATURE_SET_SPECS``)."""
-    spec = feature_set_spec(feature_set)
+    spec = feature_set_spec(normalize_feature_set(feature_set))
     cols: list[str] = []
 
     if spec.cvec_version is not None:
@@ -298,6 +384,14 @@ def router_feature_cols(
             )
         cols.extend(trust)
 
+    if spec.use_heur:
+        heur = heuristic_feature_cols(df)
+        if not heur:
+            raise ValueError(
+                "missing heur_* — run: uv run python scripts/build_query_heuristics.py --split all"
+            )
+        cols.extend(heur)
+
     if spec.use_dataset:
         if "dataset" not in df.columns:
             raise ValueError("missing dataset column")
@@ -308,7 +402,7 @@ def router_feature_cols(
 
 def validate_feature_set_data(df: pd.DataFrame, feature_set: str) -> None:
     """Ensure parquet columns exist for ``feature_set`` (call after ``load_split``)."""
-    router_feature_cols(df, feature_set)
+    router_feature_cols(df, normalize_feature_set(feature_set))
 
 
 resolve_feature_cols = router_feature_cols

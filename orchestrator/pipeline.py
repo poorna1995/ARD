@@ -61,6 +61,12 @@ from agent.episode_context import datasets_requiring_episode_context
 from agent.registry import STRATEGY_REGISTRY
 from evaluator.grade import grade as grade_answer
 from prompts.prompts_core import DATASETS, TASK_DESCRIPTION
+from routing.config import (
+    DEFAULT_SELECTIVE_TAU,
+    SELECTIVE_CHEAP_ROUTER_PATH,
+    SELECTIVE_FULL_ROUTER_PATH,
+    SELECTIVE_TAU_JSON,
+)
 from routing.router import (
     DEFAULT_AGENT_MODEL,
     ROUTER_MODEL_PATH,
@@ -73,6 +79,8 @@ from routing.router import (
     resolve_dataset_name,
     top_k_from_row,
 )
+from routing.score_routes import score_routed, write_score_summary
+from routing.selective import SelectiveGateConfig, route_selective_split, selective_build_and_route
 
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "results/orchestrator"
 QCE_SPLITS = ("train", "val", "test")
@@ -257,6 +265,33 @@ def load_eval_frame(
     return df, tag
 
 
+def _resolve_selective_config(
+    *,
+    selective_qce: bool,
+    selective_tau: float | None,
+    selective_tau_margin: float | None,
+    selective_cheap_router: str | Path | None,
+    selective_full_router: str | Path | None,
+) -> SelectiveGateConfig | None:
+    if not selective_qce:
+        return None
+    tau = selective_tau
+    if tau is None and SELECTIVE_TAU_JSON.is_file():
+        try:
+            data = json.loads(SELECTIVE_TAU_JSON.read_text(encoding="utf-8"))
+            tau = float(data.get("recommended_tau", DEFAULT_SELECTIVE_TAU))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            tau = DEFAULT_SELECTIVE_TAU
+    if tau is None:
+        tau = DEFAULT_SELECTIVE_TAU
+    return SelectiveGateConfig(
+        tau=tau,
+        tau_margin=selective_tau_margin,
+        cheap_router_path=Path(selective_cheap_router or SELECTIVE_CHEAP_ROUTER_PATH),
+        full_router_path=Path(selective_full_router or SELECTIVE_FULL_ROUTER_PATH),
+    )
+
+
 def _routing_summary(df: pd.DataFrame) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "n": len(df),
@@ -264,6 +299,12 @@ def _routing_summary(df: pd.DataFrame) -> dict[str, Any]:
         if "router_pred" in df.columns
         else {},
     }
+    if "selective_path" in df.columns:
+        summary["selective_path_distribution"] = df["selective_path"].value_counts().to_dict()
+    if "used_decompose" in df.columns:
+        summary["pct_decompose"] = round(100.0 * float(df["used_decompose"].mean()), 1)
+    if "selective_tau" in df.columns and len(df):
+        summary["selective_tau"] = float(df["selective_tau"].iloc[0])
     if "oracle_agent" in df.columns and "router_pred" in df.columns:
         mask = df["oracle_agent"].astype(str).isin(STRATEGY_REGISTRY)
         sub = df[mask]
@@ -418,10 +459,28 @@ def run_pipeline(
     checkpoint_every: int = 1,
     fresh: bool = False,
     verbose: bool = True,
+    selective_qce: bool = False,
+    selective_tau: float | None = None,
+    selective_tau_margin: float | None = None,
+    selective_cheap_router: str | Path | None = None,
+    selective_full_router: str | Path | None = None,
+    score_lookup: bool = True,
 ) -> pd.DataFrame:
+    selective_config = _resolve_selective_config(
+        selective_qce=selective_qce,
+        selective_tau=selective_tau,
+        selective_tau_margin=selective_tau_margin,
+        selective_cheap_router=selective_cheap_router,
+        selective_full_router=selective_full_router,
+    )
+    if routes_path is not None and selective_config is not None and verbose:
+        print("Note: --selective-qce ignored with --routes-path (pre-routed file).")
     if routes_path is not None and (build_features or force_refresh_features):
         if verbose:
             print("Note: --build-features / --force-refresh-features ignored with --routes-path.")
+
+    score_dataset: str | None = None
+    score_split: str | None = None
 
     if routes_path is not None:
         routed_df = load_routes_frame(
@@ -431,32 +490,74 @@ def run_pipeline(
             split=split,
         )
         tag = Path(routes_path).stem
+        score_dataset = dataset.strip().lower() if dataset and split is None else None
+        score_split = split
         if verbose:
             dist = routed_df["router_pred"].value_counts().to_dict()
             print(f"Loaded {len(routed_df)} pre-routed rows from {routes_path}")
             print(f"  router_pred distribution: {dist}")
     else:
-        df, tag = load_eval_frame(dataset=dataset, data_path=data_path, split=split)
-
-        if split is None:
-            base_cols = [c for c in df.columns if not c.startswith("emb_") and c != "oracle_agent"]
-            base = df[base_cols].copy()
-            if "training_id" not in base.columns:
-                raise KeyError("Eval frame missing training_id")
-            df = ensure_eval_features(
-                base,
-                tag,
-                build=build_features,
-                force_refresh=force_refresh_features,
-                verbose=verbose,
-            )
-        elif build_features:
+        if selective_config is not None and split is not None:
+            if build_features and verbose:
+                print("Note: --build-features ignored for QCE splits (prebuilt parquets).")
             if verbose:
-                print("Note: --build-features ignored for QCE splits (use qce pipeline).")
+                print(
+                    f"Selective QCE routing split={split!r} τ={selective_config.tau} "
+                    f"(cheap={selective_config.cheap_router_path.name})…"
+                )
+            routed_df = route_selective_split(split, selective_config)
+            tag = split
+            score_split = split
+        else:
+            df, tag = load_eval_frame(dataset=dataset, data_path=data_path, split=split)
+            score_split = split
+            score_dataset = tag if split is None else None
 
-        if verbose:
-            print(f"Routing {len(df)} rows with {router_path or ROUTER_MODEL_PATH}…")
-        routed_df = load_router_frame(df, router_path=router_path)
+            if selective_config is not None:
+                base_cols = [
+                    c
+                    for c in df.columns
+                    if not c.startswith("emb_")
+                    and not c.startswith("dim_")
+                    and c != "oracle_agent"
+                ]
+                base = df[base_cols].copy()
+                if "training_id" not in base.columns:
+                    raise KeyError("Eval frame missing training_id")
+                if verbose:
+                    print(
+                        f"Selective QCE routing tag={tag!r} τ={selective_config.tau} "
+                        f"(build_features={build_features})…"
+                    )
+                routed_df = selective_build_and_route(
+                    base,
+                    tag,
+                    selective_config,
+                    build=build_features,
+                    force_refresh=force_refresh_features,
+                    verbose=verbose,
+                )
+            elif split is None:
+                base_cols = [c for c in df.columns if not c.startswith("emb_") and c != "oracle_agent"]
+                base = df[base_cols].copy()
+                if "training_id" not in base.columns:
+                    raise KeyError("Eval frame missing training_id")
+                df = ensure_eval_features(
+                    base,
+                    tag,
+                    build=build_features,
+                    force_refresh=force_refresh_features,
+                    verbose=verbose,
+                )
+                if verbose:
+                    print(f"Routing {len(df)} rows with {router_path or ROUTER_MODEL_PATH}…")
+                routed_df = load_router_frame(df, router_path=router_path)
+            else:
+                if build_features and verbose:
+                    print("Note: --build-features ignored for QCE splits (use qce pipeline).")
+                if verbose:
+                    print(f"Routing {len(df)} rows with {router_path or ROUTER_MODEL_PATH}…")
+                routed_df = load_router_frame(df, router_path=router_path)
 
     routes_full_df = routed_df
     output, jsonl_output = _resolve_output_paths(
@@ -549,6 +650,15 @@ def run_pipeline(
         }
         if row.get("oracle_agent") is not None:
             record["oracle_agent"] = row.get("oracle_agent")
+        for key in (
+            "selective_path",
+            "used_decompose",
+            "selective_tau",
+            "max_prob_emb",
+            "margin_top2_emb",
+        ):
+            if key in row:
+                record[key] = row.get(key)
 
         should_run = execute_agents and assigned in STRATEGY_REGISTRY
         if react_only and assigned != "react":
@@ -636,7 +746,9 @@ def run_pipeline(
                     acc_s = f"{acc:.3f}" if acc is not None else "n/a"
                     print(f"[checkpoint] {len(checkpoint_df)}/{n_routes} rows saved (acc={acc_s})")
 
-    if append_to is not None or existing_df is not None:
+    if not execute_agents:
+        results_df = routes_full_df.copy()
+    elif append_to is not None or existing_df is not None:
         results_df = merge_pipeline_results(routes_full_df, existing_df, records)
     else:
         results_df = (
@@ -658,6 +770,25 @@ def run_pipeline(
         ranks = pd.to_numeric(results_df["cascade_rank"], errors="coerce")
         summary["cascade_mean_rank"] = float(ranks.mean())
         summary["cascade_frac_needed_fallback"] = float((ranks > 1).mean())
+
+    if score_lookup and not execute_agents:
+        try:
+            scored, lookup = score_routed(
+                routes_full_df,
+                dataset=score_dataset,
+                split=score_split,
+            )
+            results_df = scored
+            summary["lookup_score"] = lookup
+            write_score_summary(lookup, output.with_suffix(".lookup_score.json"))
+            if verbose:
+                em = lookup.get("em_pct")
+                musd = lookup.get("musd")
+                print(f"Lookup score: EM={em}%  mUSD={musd}  (source={lookup.get('outcome_source')})")
+        except Exception as exc:
+            summary["lookup_score_error"] = str(exc)
+            if verbose:
+                print(f"Lookup score skipped: {exc}")
 
     _write_pipeline_artifacts(
         results_df,
@@ -776,6 +907,38 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write parquet + summary every N completed rows when streaming (default: 1).",
     )
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--selective-qce",
+        action="store_true",
+        help="Phase 2: emb_only gate → decompose only if uncertain (see docs/selective_qce_phase2.md).",
+    )
+    parser.add_argument(
+        "--selective-tau",
+        type=float,
+        default=None,
+        help=f"Confidence threshold on cheap router max_prob (default: {SELECTIVE_TAU_JSON.name} or {DEFAULT_SELECTIVE_TAU}).",
+    )
+    parser.add_argument(
+        "--selective-tau-margin",
+        type=float,
+        default=None,
+        help="Also require (top1 - top2) prob >= this on cheap router.",
+    )
+    parser.add_argument(
+        "--selective-cheap-router",
+        default=None,
+        help=f"Cheap gate model (default: {SELECTIVE_CHEAP_ROUTER_PATH.name}).",
+    )
+    parser.add_argument(
+        "--selective-full-router",
+        default=None,
+        help=f"Full model for uncertain rows (default: {SELECTIVE_FULL_ROUTER_PATH.name}).",
+    )
+    parser.add_argument(
+        "--no-score-lookup",
+        action="store_true",
+        help="Skip EM/mUSD from baseline or oracle lookup after route-only (no agent re-runs).",
+    )
     return parser
 
 
@@ -808,4 +971,10 @@ if __name__ == "__main__":
         checkpoint_every=max(0, args.checkpoint_every),
         fresh=args.fresh,
         verbose=not args.quiet,
+        selective_qce=args.selective_qce,
+        selective_tau=args.selective_tau,
+        selective_tau_margin=args.selective_tau_margin,
+        selective_cheap_router=args.selective_cheap_router,
+        selective_full_router=args.selective_full_router,
+        score_lookup=not args.no_score_lookup,
     )

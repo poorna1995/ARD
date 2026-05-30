@@ -1,0 +1,38 @@
+{
+  "experiment_id": "hgbm_emb_only_soft_kl",
+  "n_features": 16,
+  "feature_cols": [
+    "emb_0",
+    "emb_1",
+    "emb_2",
+    "emb_3",
+    "emb_4",
+    "emb_5",
+    "emb_6",
+    "emb_7",
+    "emb_8",
+    "emb_9",
+    "emb_10",
+    "emb_11",
+    "emb_12",
+    "emb_13",
+    "emb_14",
+    "emb_15"
+  ],
+  "classifier": "hgbm",
+  "feature_set": "emb_only",
+  "target": "soft_p",
+  "loss": "kl_soft_ce",
+  "n_train_queries": 808,
+  "n_train_expanded_rows": 3232,
+  "val_macro_f1_hard_label": 0.33931604384506675,
+  "val_accuracy_hard_label": 0.45,
+  "hgbm_params": "default",
+  "comparison": {
+    "soft_kl_test_regret": 0.242006
+  },
+  "router_role": "primary",
+  "production": false,
+  "primary_router": "hgbm_cvec5_emb_soft_kl",
+  "secondary_router": "logreg_cvec5_emb_soft_kl"
+}

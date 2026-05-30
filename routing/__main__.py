@@ -31,6 +31,11 @@ def main() -> None:
 
         main_benchmark(sys.argv[2:])
         return
+    if len(sys.argv) > 1 and sys.argv[1] == "score-routes":
+        from routing.score_routes import main_score_routes
+
+        main_score_routes(sys.argv[2:])
+        return
     from routing.router import main as router_main
 
     router_main()

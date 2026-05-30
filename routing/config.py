@@ -51,7 +51,11 @@ SPLIT_CSV: dict[str, Path] = {
 }
 SPLIT_PARQUET: dict[str, str] = {"train": "train", "val": "val", "test": "test"}
 EMBEDDINGS_PARQUET = "datasets/qce_features/query_embeddings_{split}.parquet"
+HEURISTICS_PARQUET = "datasets/qce_features/query_heuristics_{split}.parquet"
 EMBEDDING_COL_PREFIX = "emb_"
+HEURISTIC_COL_PREFIX = "heur_"
+HEUR_CALIBRATOR_PATH = REPO_ROOT / "models/qce_heuristics/train_calibrator.json"
+SOFT_KL_ABLATION_DIR = REPO_ROOT / "results/experiments/feature_ablation_soft_kl"
 
 TRAIN_NORM_JSON = REPO_ROOT / "models/qce_graph/train_norm.json"
 PCA_PATH = REPO_ROOT / "models/query_embeddings/pca_16.joblib"
@@ -111,6 +115,31 @@ PRODUCTION_HGBM_PARAMS: dict[str, Any] | None = None
 DEFAULT_HGBM_PARAMS = PRODUCTION_HGBM_PARAMS
 
 SOFT_KL_SEED_STABILITY_DIR = REPO_ROOT / "results/experiments/seed_stability_soft_kl"
+
+# ── Phase 2: selective QCE (opt-in; ROUTER_MODEL_PATH unchanged) ─────────────
+
+SELECTIVE_CHEAP_ROUTER_PATH = (
+    REPO_ROOT / "models/router/graph_main/hgbm_emb_only_soft_kl.joblib"
+)
+SELECTIVE_FULL_ROUTER_PATH = PRIMARY_ROUTER_PATH
+SELECTIVE_DECOMPOSE_COST_USD = 0.00025
+SELECTIVE_TAU_GRID: tuple[float, ...] = (
+    0.30,
+    0.35,
+    0.40,
+    0.45,
+    0.50,
+    0.55,
+    0.60,
+    0.65,
+    0.70,
+)
+DEFAULT_SELECTIVE_TAU = 0.50
+SELECTIVE_QCE_OUT_DIR = REPO_ROOT / "results/experiments/selective_qce"
+SELECTIVE_TAU_JSON = SELECTIVE_QCE_OUT_DIR / "recommended_tau.json"
+
+# Live eval: always-{agent} runs under {root}/{folder}/{name}_baseline_{agent}/
+LIVE_EVAL_BASELINE_ROOT = REPO_ROOT / "results/orchestrator/graph_main_tuned"
 
 # ── CV-tuned comparison (not production) ──────────────────────────────────────
 
@@ -193,6 +222,7 @@ CANONICAL_FEATURE_SETS: tuple[str, ...] = (
     "cvec7_emb_trust",
     "emb_ds",
     "emb_only",
+    "heur_emb",
     "dataset_only",
 )
 
@@ -222,22 +252,24 @@ class FeatureSetSpec:
     use_emb: bool
     use_dataset: bool
     use_trust: bool
+    use_heur: bool = False
 
 
 FEATURE_SET_SPECS: dict[str, FeatureSetSpec] = {
-    "cvec5_emb_ds": FeatureSetSpec(1, True, True, False),
-    "cvec5_emb": FeatureSetSpec(1, True, False, False),
-    "cvec5_emb_trust": FeatureSetSpec(1, True, False, True),
-    "cvec5_ds": FeatureSetSpec(1, False, True, False),
-    "cvec5": FeatureSetSpec(1, False, False, False),
-    "cvec7_emb_ds": FeatureSetSpec(2, True, True, False),
-    "cvec7_emb": FeatureSetSpec(2, True, False, False),
-    "cvec7_emb_trust": FeatureSetSpec(2, True, False, True),
-    "cvec7_ds": FeatureSetSpec(2, False, True, False),
-    "cvec7": FeatureSetSpec(2, False, False, False),
-    "emb_ds": FeatureSetSpec(None, True, True, False),
-    "emb_only": FeatureSetSpec(None, True, False, False),
-    "dataset_only": FeatureSetSpec(None, False, True, False),
+    "cvec5_emb_ds": FeatureSetSpec(1, True, True, False, False),
+    "cvec5_emb": FeatureSetSpec(1, True, False, False, False),
+    "cvec5_emb_trust": FeatureSetSpec(1, True, False, True, False),
+    "cvec5_ds": FeatureSetSpec(1, False, True, False, False),
+    "cvec5": FeatureSetSpec(1, False, False, False, False),
+    "cvec7_emb_ds": FeatureSetSpec(2, True, True, False, False),
+    "cvec7_emb": FeatureSetSpec(2, True, False, False, False),
+    "cvec7_emb_trust": FeatureSetSpec(2, True, False, True, False),
+    "cvec7_ds": FeatureSetSpec(2, False, True, False, False),
+    "cvec7": FeatureSetSpec(2, False, False, False, False),
+    "emb_ds": FeatureSetSpec(None, True, True, False, False),
+    "emb_only": FeatureSetSpec(None, True, False, False, False),
+    "heur_emb": FeatureSetSpec(None, True, False, False, True),
+    "dataset_only": FeatureSetSpec(None, False, True, False, False),
 }
 
 CVEC5_FEATURE_SETS = frozenset(k for k, s in FEATURE_SET_SPECS.items() if s.cvec_version == 1)
@@ -252,7 +284,24 @@ EXPERIMENT_ID_BY_FEATURE_SET: dict[str, str] = {
     "cvec7_emb_ds": LEGACY_ROUTER_V2_EXPERIMENT_ID,
     "cvec7_emb": "hgbm_cvec7_emb_balanced",
     "cvec7_emb_trust": "hgbm_cvec7_emb_trust_balanced",
+    "emb_only": "hgbm_emb_only_soft_kl",
+    "heur_emb": "hgbm_heur_emb_soft_kl",
 }
+
+
+def soft_kl_experiment_id(classifier: str, feature_set: str) -> str:
+    """Soft-KL checkpoint stem, e.g. ``hgbm_heur_emb_soft_kl``."""
+    fs = normalize_feature_set(feature_set)
+    if fs == PRODUCTION_FEATURE_SET and classifier == "hgbm":
+        return PRIMARY_ROUTER_EXPERIMENT_ID
+    return f"{classifier}_{fs}_soft_kl"
+
+
+def soft_kl_out_dir(feature_set: str) -> Path:
+    fs = normalize_feature_set(feature_set)
+    if fs == PRODUCTION_FEATURE_SET:
+        return REPO_ROOT / "results/experiments/soft_kl_cvec5_emb"
+    return SOFT_KL_ABLATION_DIR / fs
 
 
 def normalize_feature_set(feature_set: str) -> str:
@@ -268,6 +317,10 @@ def feature_set_spec(feature_set: str) -> FeatureSetSpec:
 
 def feature_set_needs_embeddings(feature_set: str) -> bool:
     return feature_set_spec(feature_set).use_emb
+
+
+def feature_set_needs_heuristics(feature_set: str) -> bool:
+    return feature_set_spec(feature_set).use_heur
 
 
 def feature_set_cvec_version(feature_set: str) -> int | None:
@@ -314,6 +367,7 @@ CVEC5_ABLATION_CASES: tuple[AblationCase, ...] = (
     AblationCase("cvec5+dataset", "cvec5_ds", "5-dim C(Q) + dataset"),
     AblationCase("cvec5-only", "cvec5", "5-dim C(Q) only"),
     AblationCase("emb-only", "emb_only", "PCA-16 embedding only"),
+    AblationCase("heur+emb", "heur_emb", "heuristic v2 + PCA-16 (no decompose)"),
     AblationCase("dataset-only", "dataset_only", "dataset one-hot only"),
 )
 

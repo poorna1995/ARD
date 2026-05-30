@@ -4,7 +4,8 @@ Oracle routing bounds from live-eval static baselines (always-{raw,cot,react,mul
 Computes per-dataset:
   - always_{agent} EM / mUSD
   - Average — macro mean over available agents
-  - Best Agent — per-query oracle (cheapest correct agent; else cheapest overall)
+  - Best Agent — per-query cheapest correct agent; else cheapest overall (EM upper bound)
+  - Oracle — utility argmax ``perf - λ·cost`` (``λ=25``), matching training ``oracle_agent``
 """
 
 from __future__ import annotations
@@ -16,11 +17,12 @@ from typing import Any
 
 import pandas as pd
 
-from routing.config import AGENTS, REPO_ROOT
+from routing.config import AGENTS, LIVE_EVAL_BASELINE_ROOT, REPO_ROOT
 from routing.benchmark import DATASET_DISPLAY, list_eval_sample_datasets
 from routing.router import load_eval_parquet
+from src.utils.soft_labels import DEFAULT_UTILITY_LAMBDA
 
-DEFAULT_BASELINE_ROOT = REPO_ROOT / "results/orchestrator/graph_main_tuned"
+DEFAULT_BASELINE_ROOT = LIVE_EVAL_BASELINE_ROOT
 DEFAULT_OUT_DIR = REPO_ROOT / "results/reports/live_eval"
 
 # eval_samples stem -> on-disk baseline folder layout
@@ -29,6 +31,7 @@ DATASET_BASELINE_LAYOUT: dict[str, tuple[str, str]] = {
     "hotpot": ("hotpot", "hotpot"),
     "math": ("math", "math"),
     "mmlu": ("mmlu_pro", "mmlu"),
+    "mmlu_pro": ("mmlu_pro", "mmlu"),  # alias: baselines live under graph_main_tuned/mmlu_pro/
     "musique": ("musique", "musique"),
 }
 
@@ -76,12 +79,39 @@ def load_baseline_agent(
     return out.set_index("training_id")
 
 
-def _pick_oracle_agent(row: pd.Series, agents: list[str]) -> str:
+def _pick_best_agent(row: pd.Series, agents: list[str]) -> str:
     """Cheapest among correct agents; if none correct, cheapest overall."""
     winners = [a for a in agents if int(row[f"correct_{a}"])]
     if winners:
         return min(winners, key=lambda a: float(row[f"cost_{a}"]))
     return min(agents, key=lambda a: float(row[f"cost_{a}"]))
+
+
+def _pick_utility_oracle(
+    row: pd.Series,
+    agents: list[str],
+    *,
+    utility_lambda: float = DEFAULT_UTILITY_LAMBDA,
+) -> str:
+    """``argmax_a (perf - λ·cost)`` with cost / agent-order tie-breaks (training labels)."""
+    best_agent: str | None = None
+    best_utility = float("-inf")
+    best_cost = float("inf")
+    for agent in agents:
+        perf = float(int(row[f"correct_{agent}"]))
+        cost = float(row[f"cost_{agent}"])
+        utility = perf - float(utility_lambda) * cost
+        if (
+            best_agent is None
+            or utility > best_utility
+            or (utility == best_utility and cost < best_cost)
+            or (utility == best_utility and cost == best_cost and agent < best_agent)
+        ):
+            best_agent = agent
+            best_utility = utility
+            best_cost = cost
+    assert best_agent is not None
+    return best_agent
 
 
 def build_oracle_frame(
@@ -123,9 +153,13 @@ def build_oracle_frame(
             rec[f"correct_{agent}"] = int(sub["correct"])
             rec[f"cost_{agent}"] = float(sub["cost_usd"])
             rec[f"pred_{agent}"] = str(sub["predicted_answer"])
-        rec["oracle_agent"] = _pick_oracle_agent(pd.Series(rec), present)
-        rec["oracle_correct"] = int(rec[f"correct_{rec['oracle_agent']}"])
-        rec["oracle_cost_usd"] = float(rec[f"cost_{rec['oracle_agent']}"])
+        rec["best_agent"] = _pick_best_agent(pd.Series(rec), present)
+        rec["best_agent_correct"] = int(rec[f"correct_{rec['best_agent']}"])
+        rec["best_agent_cost_usd"] = float(rec[f"cost_{rec['best_agent']}"])
+        rec["utility_oracle_agent"] = _pick_utility_oracle(pd.Series(rec), present)
+        rec["utility_oracle_correct"] = int(rec[f"correct_{rec['utility_oracle_agent']}"])
+        rec["utility_oracle_cost_usd"] = float(rec[f"cost_{rec['utility_oracle_agent']}"])
+        rec["em_oracle_upper"] = int(any(rec[f"correct_{a}"] for a in present))
         rows.append(rec)
 
     return pd.DataFrame(rows), present, missing
@@ -149,7 +183,8 @@ def summarize_oracle_frame(
     avg_em = sum(per_agent[a]["em_pct"] for a in agents) / len(agents)
     avg_musd = sum(per_agent[a]["musd"] for a in agents) / len(agents)
 
-    oracle_pick_counts = frame["oracle_agent"].value_counts().to_dict()
+    best_agent_pick_counts = frame["best_agent"].value_counts().to_dict()
+    utility_oracle_pick_counts = frame["utility_oracle_agent"].value_counts().to_dict()
     eval_n: int | None = None
     try:
         eval_n = len(load_eval_parquet(str(frame["dataset"].iloc[0])))
@@ -169,9 +204,14 @@ def summarize_oracle_frame(
         "always": per_agent,
         "average_em_pct": round(avg_em, 2),
         "average_musd": round(avg_musd, 4),
-        "best_agent_em_pct": round(frame["oracle_correct"].mean() * 100, 2),
-        "best_agent_musd": round(frame["oracle_cost_usd"].mean() * 1000, 4),
-        "oracle_pick_counts": {k: int(v) for k, v in oracle_pick_counts.items()},
+        "best_agent_em_pct": round(frame["best_agent_correct"].mean() * 100, 2),
+        "best_agent_musd": round(frame["best_agent_cost_usd"].mean() * 1000, 4),
+        "oracle_em_pct": round(frame["em_oracle_upper"].mean() * 100, 2),
+        "oracle_utility_em_pct": round(frame["utility_oracle_correct"].mean() * 100, 2),
+        "oracle_utility_musd": round(frame["utility_oracle_cost_usd"].mean() * 1000, 4),
+        "utility_lambda": DEFAULT_UTILITY_LAMBDA,
+        "best_agent_pick_counts": {k: int(v) for k, v in best_agent_pick_counts.items()},
+        "utility_oracle_pick_counts": {k: int(v) for k, v in utility_oracle_pick_counts.items()},
     }
 
 
@@ -230,10 +270,21 @@ def collect_oracle_bounds(
                 "dataset": ds,
                 "dataset_display": summary["dataset_display"],
                 "method": "best_agent",
-                "agent": "oracle",
+                "agent": "best_agent",
                 "n": summary["n"],
                 "em_pct": summary["best_agent_em_pct"],
                 "musd": summary["best_agent_musd"],
+            }
+        )
+        always_rows.append(
+            {
+                "dataset": ds,
+                "dataset_display": summary["dataset_display"],
+                "method": "oracle",
+                "agent": "utility_oracle",
+                "n": summary["n"],
+                "em_pct": summary["oracle_utility_em_pct"],
+                "musd": summary["oracle_utility_musd"],
             }
         )
         if missing:
@@ -264,6 +315,9 @@ def _summary_to_flat_csv(summary_df: pd.DataFrame) -> pd.DataFrame:
             "average_musd": rec["average_musd"],
             "best_agent_em_pct": rec["best_agent_em_pct"],
             "best_agent_musd": rec["best_agent_musd"],
+            "oracle_em_pct": rec["oracle_em_pct"],
+            "oracle_utility_em_pct": rec["oracle_utility_em_pct"],
+            "oracle_utility_musd": rec["oracle_utility_musd"],
         }
         for agent, stats in rec["always"].items():
             row[f"always_{agent}_em_pct"] = stats["em_pct"]
@@ -294,7 +348,7 @@ def print_oracle_bounds_table(summary_df: pd.DataFrame) -> None:
     if summary_df.empty:
         print("No oracle bounds computed (missing baseline parquets).")
         return
-    print("\n=== Oracle bounds (Average / Best Agent) ===\n")
+    print("\n=== Oracle bounds (Average / Best Agent / Oracle) ===\n")
     show = summary_df[
         [
             "dataset_display",
@@ -303,6 +357,8 @@ def print_oracle_bounds_table(summary_df: pd.DataFrame) -> None:
             "average_musd",
             "best_agent_em_pct",
             "best_agent_musd",
+            "oracle_utility_em_pct",
+            "oracle_utility_musd",
             "agents_missing",
         ]
     ].copy()

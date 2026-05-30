@@ -128,9 +128,24 @@ def attach_router(
     return out
 
 
+def _drop_stale_outcome_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove per-agent outcome cols from ``df`` so merge with fresh outcomes is unambiguous."""
+    prefixes = ("correct_", "cost_", "pred_", "utility_")
+    drop = [
+        c
+        for c in df.columns
+        if c.startswith(prefixes)
+        or c in ("max_utility", "best_agent", "best_agent_correct", "best_agent_cost_usd")
+        or c.startswith("utility_oracle_")
+        or c in ("em_oracle_upper",)
+    ]
+    return df.drop(columns=drop, errors="ignore")
+
+
 def attach_outcomes(df: pd.DataFrame, outcomes: pd.DataFrame) -> pd.DataFrame:
     """Merge oracle outcomes; exec metrics and utility regret for ``router_pred``."""
-    out = df.merge(outcomes, left_on="training_id", right_index=True, how="left")
+    base = _drop_stale_outcome_cols(df)
+    out = base.merge(outcomes, left_on="training_id", right_index=True, how="left")
     exec_correct = []
     exec_cost = []
     utility_regret = []
@@ -147,7 +162,8 @@ def attach_outcomes(df: pd.DataFrame, outcomes: pd.DataFrame) -> pd.DataFrame:
     out["exec_correct"] = exec_correct
     out["exec_cost_usd"] = exec_cost
     out["utility_regret"] = utility_regret
-    out["oracle_label_match"] = (out["router_pred"] == out[TARGET]).astype(int)
+    if TARGET in out.columns:
+        out["oracle_label_match"] = (out["router_pred"] == out[TARGET]).astype(int)
     return out
 
 
@@ -260,7 +276,8 @@ def metrics_for_routed(
     accs = []
     costs = []
     regrets = []
-    oracle_match = []
+    oracle_match: list[int] = []
+    has_oracle_label = TARGET in df.columns
     for _, row in df.iterrows():
         agent = str(row[agent_col])
         accs.append(int(row.get(f"correct_{agent}", 0)))
@@ -268,7 +285,8 @@ def metrics_for_routed(
         u = float(row.get(f"utility_{agent}", np.nan))
         u_max = float(row.get("max_utility", np.nan))
         regrets.append(max(0.0, u_max - u) if pd.notna(u) and pd.notna(u_max) else np.nan)
-        oracle_match.append(int(agent == row[TARGET]))
+        if has_oracle_label:
+            oracle_match.append(int(agent == row[TARGET]))
     return _strategy_metrics(name, accs, costs, regrets, oracle_match, len(df))
 
 

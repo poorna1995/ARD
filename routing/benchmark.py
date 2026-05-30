@@ -122,7 +122,19 @@ def collect_router_distributions(
     for name in names:
         routed = route_eval_dataset(name, router_path=router_path, build_features=build_features)
         frames[name] = routed
-        rows.append(router_distribution_row(name, routed))
+        row = router_distribution_row(name, routed)
+        try:
+            from routing.score_routes import score_routed_eval
+
+            _, lookup = score_routed_eval(routed, name)
+            row["em_pct"] = lookup.get("em_pct")
+            row["musd"] = lookup.get("musd")
+            row["mean_utility_regret"] = lookup.get("mean_utility_regret")
+        except (FileNotFoundError, ValueError) as exc:
+            row["em_pct"] = None
+            row["musd"] = None
+            row["lookup_error"] = str(exc)
+        rows.append(row)
         if save_routes:
             out_cols = [
                 "training_id",

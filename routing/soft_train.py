@@ -29,6 +29,9 @@ from routing.config import (
     ROUTER_ROLE_BY_CLASSIFIER,
     SECONDARY_ROUTER_EXPERIMENT_ID,
     SOFT_KL_SEED_STABILITY_DIR,
+    normalize_feature_set,
+    soft_kl_experiment_id,
+    soft_kl_out_dir,
 )
 from routing.router import (
     AGENTS,
@@ -36,7 +39,7 @@ from routing.router import (
     ROUTER_SPEC,
     TrainSpec,
     evaluate,
-    load_split,
+    load_split_for_feature_set,
     make_pipeline,
     router_feature_cols,
     save_router,
@@ -54,8 +57,8 @@ SOFT_KL_OUT_DIR = REPO_ROOT / "results/experiments/soft_kl_cvec5_emb"
 BASELINES_CSV = REPO_ROOT / "results/experiments/classifier_baselines_cvec5_emb/baselines_all.csv"
 
 
-def soft_kl_model_path(classifier: ClassifierName) -> Path:
-    exp = SOFT_KL_EXPERIMENT_IDS[classifier]
+def soft_kl_model_path(classifier: ClassifierName, feature_set: str = PRODUCTION_FEATURE_SET) -> Path:
+    exp = soft_kl_experiment_id(classifier, feature_set)
     return REPO_ROOT / "models/router/graph_main" / f"{exp}.joblib"
 
 
@@ -144,21 +147,22 @@ def train_soft_kl_router(
 ) -> tuple[Pipeline, list[str], dict[str, Any]]:
     """Train on train split; return pipeline, feature columns, and training meta."""
     spec = spec or ROUTER_SPEC
-    experiment_id = SOFT_KL_EXPERIMENT_IDS[classifier]
-    train_df = load_split("train", with_embeddings=True)
-    validate_feature_set_data(train_df, spec.feature_set)
-    feature_cols = router_feature_cols(train_df, spec.feature_set)
+    fs = normalize_feature_set(spec.feature_set)
+    experiment_id = soft_kl_experiment_id(classifier, fs)
+    train_df = load_split_for_feature_set("train", fs)
+    validate_feature_set_data(train_df, fs)
+    feature_cols = router_feature_cols(train_df, fs)
     hgbm_params = spec.hgbm_params if spec.hgbm_params is not None else PRODUCTION_HGBM_PARAMS
     pipe = make_soft_kl_pipeline(
         feature_cols, classifier, random_state=random_state, hgbm_params=hgbm_params
     )
     pipe, n_queries, n_expanded = fit_soft_kl_router(pipe, train_df, feature_cols)
-    val_df = load_split("val", with_embeddings=True)
+    val_df = load_split_for_feature_set("val", fs)
     val_label = evaluate(pipe, val_df, feature_cols)
     meta: dict[str, Any] = {
         "classifier": classifier,
         "experiment_id": experiment_id,
-        "feature_set": PRODUCTION_FEATURE_SET,
+        "feature_set": fs,
         "target": "soft_p",
         "loss": "kl_soft_ce",
         "n_train_queries": n_queries,
@@ -177,10 +181,12 @@ def eval_soft_kl_splits(
     classifier: ClassifierName,
     splits: tuple[str, ...] = ("val", "test"),
     *,
+    feature_set: str = PRODUCTION_FEATURE_SET,
     oracle_path: Path = DEFAULT_ORACLE,
 ) -> pd.DataFrame:
     """Utility regret + EM (same harness as Step 2 baselines)."""
-    experiment_id = SOFT_KL_EXPERIMENT_IDS[classifier]
+    fs = normalize_feature_set(feature_set)
+    experiment_id = soft_kl_experiment_id(classifier, fs)
     rows = []
     for split in splits:
         rows.append(
@@ -192,6 +198,7 @@ def eval_soft_kl_splits(
                 hp_policy="soft_kl",
                 experiment_id=experiment_id,
                 oracle_path=oracle_path,
+                feature_set=fs,
             )
         )
     return pd.DataFrame(rows)
@@ -230,21 +237,23 @@ def _test_regret_from_soft_summary(clf: ClassifierName) -> float | None:
 def run_soft_kl_seed_sweep(
     *,
     classifier: ClassifierName = "logreg",
+    feature_set: str = PRODUCTION_FEATURE_SET,
     splits: tuple[str, ...] = ("val", "test"),
     seeds: tuple[int, ...] = (42, 123, 456, 789, 2024),
     out_dir: Path | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Retrain soft-KL model per seed; report utility regret (primary) and hard-label macro-F1."""
-    out_dir = Path(out_dir or SOFT_KL_SEED_STABILITY_DIR)
+    fs = normalize_feature_set(feature_set)
+    out_dir = Path(out_dir or soft_kl_out_dir(fs))
     out_dir.mkdir(parents=True, exist_ok=True)
-    train_df = load_split("train", with_embeddings=True)
+    experiment_id = soft_kl_experiment_id(classifier, fs)
 
     rows: list[dict[str, Any]] = []
     for seed in seeds:
         spec = TrainSpec(
-            experiment_id=SOFT_KL_EXPERIMENT_IDS[classifier],
-            feature_set=PRODUCTION_FEATURE_SET,
+            experiment_id=experiment_id,
+            feature_set=fs,
             hgbm_params=PRODUCTION_HGBM_PARAMS,
             weight_mode="none",
             use_class_weight=False,
@@ -260,9 +269,10 @@ def run_soft_kl_seed_sweep(
                 feature_cols,
                 classifier=classifier,
                 hp_policy="soft_kl",
-                experiment_id=SOFT_KL_EXPERIMENT_IDS[classifier],
+                experiment_id=experiment_id,
+                feature_set=fs,
             )
-            label = evaluate(pipe, load_split(split, with_embeddings=True), feature_cols)
+            label = evaluate(pipe, load_split_for_feature_set(split, fs), feature_cols)
             row = {
                 "classifier": classifier,
                 "seed": seed,
@@ -331,7 +341,12 @@ def main_soft_train(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--save", action="store_true", help="Write joblib under models/router/graph_main/")
     p.add_argument("--split", choices=("val", "test", "both"), default="both")
-    p.add_argument("--out-dir", type=Path, default=SOFT_KL_OUT_DIR)
+    p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Metrics output dir (default: soft_kl_cvec5_emb or feature_ablation_soft_kl/<fs>)",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--quiet", action="store_true")
     p.add_argument(
@@ -345,25 +360,33 @@ def main_soft_train(argv: list[str] | None = None) -> None:
         nargs="+",
         default=[42, 123, 456, 789, 2024],
     )
+    p.add_argument(
+        "--feature-set",
+        default=PRODUCTION_FEATURE_SET,
+        help="Feature set id (emb_only | heur_emb | cvec5_emb, …)",
+    )
     args = p.parse_args(argv)
 
     clf: ClassifierName = args.classifier
+    fs = normalize_feature_set(args.feature_set)
 
     if args.seed_sweep:
         run_soft_kl_seed_sweep(
             classifier=clf,
+            feature_set=fs,
             splits=("val", "test"),
             seeds=tuple(args.seeds),
-            out_dir=args.out_dir,
+            out_dir=args.out_dir or soft_kl_out_dir(fs),
             verbose=not args.quiet,
         )
         return
 
-    experiment_id = SOFT_KL_EXPERIMENT_IDS[clf]
+    experiment_id = soft_kl_experiment_id(clf, fs)
+    out_dir = args.out_dir or soft_kl_out_dir(fs)
 
     spec = TrainSpec(
         experiment_id=experiment_id,
-        feature_set=PRODUCTION_FEATURE_SET,
+        feature_set=fs,
         hgbm_params=PRODUCTION_HGBM_PARAMS,
         weight_mode="none",
         use_class_weight=False,
@@ -374,21 +397,23 @@ def main_soft_train(argv: list[str] | None = None) -> None:
     )
 
     splits = ("val", "test") if args.split == "both" else (args.split,)
-    table = eval_soft_kl_splits(pipe, feature_cols, clf, splits=splits)
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    table = eval_soft_kl_splits(pipe, feature_cols, clf, splits=splits, feature_set=fs)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    args.out_dir = out_dir
     table.to_csv(args.out_dir / f"soft_kl_metrics_{clf}.csv", index=False)
 
     if "test" in splits:
         soft_test = float(table.loc[table["split"] == "test", "mean_utility_regret"].iloc[0])
-        hard_hgbm = eval_frozen_hgbm("test")
-        meta["comparison"] = {
-            "hard_hgbm_test_regret": float(hard_hgbm["mean_utility_regret"]),
-            "soft_kl_test_regret": soft_test,
-            "delta_vs_hard_hgbm": soft_test - float(hard_hgbm["mean_utility_regret"]),
-        }
-        meta["four_way_test_regret"] = comparison_table(
-            soft_logreg_test=soft_test if clf == "logreg" else None
-        )
+        meta["comparison"] = {"soft_kl_test_regret": soft_test}
+        if fs == PRODUCTION_FEATURE_SET:
+            hard_hgbm = eval_frozen_hgbm("test")
+            meta["comparison"]["hard_hgbm_test_regret"] = float(hard_hgbm["mean_utility_regret"])
+            meta["comparison"]["delta_vs_hard_hgbm"] = soft_test - float(
+                hard_hgbm["mean_utility_regret"]
+            )
+            meta["four_way_test_regret"] = comparison_table(
+                soft_logreg_test=soft_test if clf == "logreg" else None
+            )
 
     summary = {"training": meta, "metrics": table.to_dict(orient="records")}
     summary_path = args.out_dir / f"{clf}_soft_kl_summary.json"
@@ -400,7 +425,7 @@ def main_soft_train(argv: list[str] | None = None) -> None:
             pipe,
             feature_cols=feature_cols,
             experiment_id=experiment_id,
-            path=soft_kl_model_path(clf),
+            path=soft_kl_model_path(clf, fs),
             extra_meta={
                 **meta,
                 "target": "soft_p",
