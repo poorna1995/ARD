@@ -1,0 +1,49 @@
+{
+  "variant": "p1",
+  "gate1_supervision": "utility_softmax",
+  "utility_lambda": 25.0,
+  "softmax_temperature": 1.0,
+  "feature_set": "cvec5_emb",
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty",
+    "emb_0",
+    "emb_1",
+    "emb_2",
+    "emb_3",
+    "emb_4",
+    "emb_5",
+    "emb_6",
+    "emb_7",
+    "emb_8",
+    "emb_9",
+    "emb_10",
+    "emb_11",
+    "emb_12",
+    "emb_13",
+    "emb_14",
+    "emb_15"
+  ],
+  "agents": [
+    "react",
+    "cot",
+    "raw",
+    "multiagent"
+  ],
+  "theta_s": 0.05,
+  "n_train_queries": 736,
+  "n_train_expanded_rows": 2944,
+  "val_hard_dominant_accuracy": 0.3088235294117647,
+  "val_abstention": {
+    "theta_s": 0.05,
+    "abstention_rate": 0.0,
+    "precision": 0.6044444444444445,
+    "recall": 1.0,
+    "f1": 0.7534626038781164
+  },
+  "models_dir": "/Users/poorna/Desktop/research_work/models/daar",
+  "model_path": "/Users/poorna/Desktop/research_work/models/daar/solvability_p1_soft_kl.joblib"
+}

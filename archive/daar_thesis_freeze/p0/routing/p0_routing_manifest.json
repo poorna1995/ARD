@@ -1,0 +1,141 @@
+{
+  "gate": 3,
+  "method": "daar_p0",
+  "theta_s": 0.35,
+  "route_cost_norms": {
+    "route_cost_hat_median_train": 351.66666666666663,
+    "route_cost_oracle_median_train": 254.5
+  },
+  "routing_score": "s_hat - lambda * (X1_hat + X2_dynamic_hat) / train_median",
+  "utility_eval": "r_a - lambda * (X1 + X2_dynamic) / train_median_oracle",
+  "lambda_grid": [
+    0.0,
+    0.001,
+    0.005,
+    0.01,
+    0.05,
+    0.1,
+    0.5,
+    1.0
+  ],
+  "lambda_frozen": 0.0,
+  "lambda_selection": "min mean_agent_regret on val",
+  "primary_metric": "mean_agent_regret",
+  "secondary_metric": "mean_utility_regret",
+  "val_lambda_sweep": [
+    {
+      "lambda": 0.0,
+      "n": 225,
+      "mean_agent_regret": 0.1511111111111111,
+      "mean_utility_regret": 0.1511111111111111,
+      "success_rate": 0.4533333333333333,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.0012039379999999999
+    },
+    {
+      "lambda": 0.001,
+      "n": 225,
+      "mean_agent_regret": 0.1511111111111111,
+      "mean_utility_regret": 0.1666271643745907,
+      "success_rate": 0.4533333333333333,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.001105426
+    },
+    {
+      "lambda": 0.005,
+      "n": 225,
+      "mean_agent_regret": 0.21333333333333335,
+      "mean_utility_regret": 0.22514813359528482,
+      "success_rate": 0.39111111111111113,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.0005275226666666666
+    },
+    {
+      "lambda": 0.01,
+      "n": 225,
+      "mean_agent_regret": 0.25333333333333335,
+      "mean_utility_regret": 0.19795066579349488,
+      "success_rate": 0.3511111111111111,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.00015630066666666665
+    },
+    {
+      "lambda": 0.05,
+      "n": 225,
+      "mean_agent_regret": 0.26222222222222225,
+      "mean_utility_regret": 0.12791006330495525,
+      "success_rate": 0.3422222222222222,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.00010898733333333333
+    },
+    {
+      "lambda": 0.1,
+      "n": 225,
+      "mean_agent_regret": 0.27111111111111114,
+      "mean_utility_regret": 0.1626125300152805,
+      "success_rate": 0.3333333333333333,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.00012004133333333332
+    },
+    {
+      "lambda": 0.5,
+      "n": 225,
+      "mean_agent_regret": 0.3022222222222222,
+      "mean_utility_regret": 0.4035101506221349,
+      "success_rate": 0.3022222222222222,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 0.00010391333333333333
+    },
+    {
+      "lambda": 1.0,
+      "n": 225,
+      "mean_agent_regret": 0.36,
+      "mean_utility_regret": 0.7018642217856363,
+      "success_rate": 0.24444444444444444,
+      "abstention_rate": 0.17777777777777778,
+      "mean_oracle_cost_usd": 7.5472e-05
+    }
+  ],
+  "val_daar_p0": {
+    "lambda": 0.0,
+    "n": 225,
+    "mean_agent_regret": 0.1511111111111111,
+    "mean_utility_regret": 0.1511111111111111,
+    "success_rate": 0.4533333333333333,
+    "abstention_rate": 0.17777777777777778,
+    "mean_oracle_cost_usd": 0.0012039379999999999
+  },
+  "val_baseline": {
+    "baseline": "hgbm_cvec5_emb_soft_kl",
+    "n": 225,
+    "mean_agent_regret": 0.022222222222222223,
+    "mean_utility_regret": 0.022222222222222223,
+    "success_rate": 0.5822222222222222,
+    "abstention_rate": 0.0,
+    "mean_oracle_cost_usd": 0.0013365393333333332
+  },
+  "test_daar_p0": {
+    "lambda": 0.0,
+    "n": 225,
+    "mean_agent_regret": 0.15555555555555556,
+    "mean_utility_regret": 0.15555555555555556,
+    "success_rate": 0.4711111111111111,
+    "abstention_rate": 0.16,
+    "mean_oracle_cost_usd": 0.0011824486666666668
+  },
+  "test_baseline": {
+    "baseline": "hgbm_cvec5_emb_soft_kl",
+    "n": 225,
+    "mean_agent_regret": 0.022222222222222223,
+    "mean_utility_regret": 0.022222222222222223,
+    "success_rate": 0.6044444444444445,
+    "abstention_rate": 0.0,
+    "mean_oracle_cost_usd": 0.0012975173333333334
+  },
+  "test_evaluated_once": true,
+  "predictions": {
+    "val": "/Users/poorna/Desktop/research_work/datasets/daar/routing/daar_p0_val_predictions.parquet",
+    "test": "/Users/poorna/Desktop/research_work/datasets/daar/routing/daar_p0_test_predictions.parquet"
+  },
+  "gate3_pass": false
+}

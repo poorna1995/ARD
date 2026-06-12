@@ -3,21 +3,17 @@
 C(Q) main (v3.0) uses five dimensions for the primary router:
   structural, reasoning, evidence, tool, coordination_uncertainty.
 
-Legacy five ``dim_*`` columns and seven ``dim7_*`` columns are retained as
-secondary/auxiliary outputs for ablation and backward compatibility.
+Legacy five ``dim_legacy_*`` columns are retained as secondary/auxiliary outputs
+for ablation and backward compatibility.
 ``complexity_graph`` remains a secondary scalar (Step 2.4).
 
-  main dim_*      primary router dimensions (v3.0)
-  legacy dim_*    experiment 1 (kept as secondary)
-  v2 dim7_*       structural, compositional, retrieval (info acquisition),
-                  execution (files/code/API), coordination (orchestration),
-                  verification, uncertainty
+  main dim_*          primary router dimensions (v3.0)
+  legacy dim_legacy_* experiment 1 (kept as secondary)
 """
 
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,79 +22,12 @@ from typing import Any
 import networkx as nx
 
 from agent.dataset_profile import infer_subtask_dependencies
+from config.local.constants import DIMS, DS, GRAPH, PLAN, SCORE, STATUS, TOOLS
 from qce.decompose import load_plans_jsonl
 
-START = "__start__"
-END = "__end__"
-GRAPH_STATUS_OK = "ok"
-GRAPH_STATUS_REPAIRED = "repaired"
-GRAPH_STATUS_EMPTY = "empty"
-CHAIN_FALLBACK_DATASETS = frozenset({"hotpot", "musique", "mmlu_pro"})
-
-WEB_TOOLS = frozenset({"web_search", "wikipedia", "wikipedia_search", "arxiv_search", "retrieve_tool"})
-CODE_TOOLS = frozenset({"python_exec", "math_tool", "math", "code"})
-FILE_TOOLS = frozenset({"read_file", "pdb_parse", "github_search"})
-
-_REPAIR_WEIGHTS: dict[str, float] = {
-    "chain_fallback": 0.45,
-    "infer_linear_chain": 0.25,
-    "infer_dep": 0.04,
-    "drop_cycle_edge": 0.12,
-    "skip_back_edge": 0.10,
-    "drop_non_forward_dep": 0.06,
-    "unknown_parent": 0.08,
-    "self_loop": 0.05,
-}
-
-_SCORE_WEIGHTS = {
-    "max_depth": 0.22,
-    "n_tool_nodes": 0.18,
-    "tool_fraction": 0.16,
-    "critical_path_tool_steps": 0.18,
-    "log_nodes": 0.14,
-    "verify_fraction": 0.12,
-}
-
-DIM_COLS = (
-    "dim_structural",
-    "dim_reasoning",
-    "dim_evidence",
-    "dim_tool",
-    "dim_coordination_uncertainty",
-)
-
-# Secondary legacy 5-dim set (kept for compatibility/ablations).
-DIM5_LEGACY_COLS = (
-    "dim_legacy_structural",
-    "dim_legacy_compositional",
-    "dim_legacy_retrieval",
-    "dim_legacy_verification",
-    "dim_legacy_uncertainty",
-)
-
-# C(Q) v2 — seven procedural-burden dimensions (experiment 2; v1 dim_* unchanged).
-C_VECTOR_VER_V2 = "c-vector-v2.0"
-DIM7_COLS = (
-    "dim7_structural",
-    "dim7_compositional",
-    "dim7_retrieval",
-    "dim7_execution",
-    "dim7_coordination",
-    "dim7_verification",
-    "dim7_uncertainty",
-)
-_EXECUTION_TOOLS = frozenset({"read_file", "pdb_parse", "python_exec", "math_tool", "math", "code"})
-_RETRIEVAL_TOOLS = WEB_TOOLS | frozenset({"retrieve"})
-_TEMPORAL_RELATIONS = frozenset({"temporal"})
-_COMPARISON_RELATIONS = frozenset({"comparison"})
-
-
-_PLACEHOLDER_QUERY_RE = re.compile(
-    r"(?i)\b(from t\d+|entity from|country from|city from|person from|step t\d+)\b"
-)
-_SEMANTIC_RELATIONS = frozenset(
-    {"compositional", "temporal", "location", "comparison", "country", "causal"}
-)
+# Backward-compatible node ids (prefer config.local.qce.GRAPH).
+START = GRAPH.start
+END = GRAPH.end
 
 
 @dataclass(frozen=True)
@@ -119,7 +48,19 @@ class GraphBuildResult:
     graph: nx.DiGraph
     features: dict[str, Any]
     repair_log: list[str] = field(default_factory=list)
-    status: str = GRAPH_STATUS_OK
+    status: str = STATUS.ok
+
+
+def _step_type(st: dict[str, Any]) -> str:
+    return str(st.get("step_type", "")).strip().lower()
+
+
+def _sub_id(st: dict[str, Any]) -> str:
+    return str(st.get("id", "")).strip()
+
+
+def _sub_dag(g: nx.DiGraph, sub: nx.DiGraph | None) -> bool:
+    return sub is None or nx.is_directed_acyclic_graph(sub)
 
 
 def build_task_dag(plan: dict[str, Any]) -> GraphBuildResult:
@@ -128,22 +69,15 @@ def build_task_dag(plan: dict[str, Any]) -> GraphBuildResult:
     dataset = str(plan.get("dataset", "")).strip().lower()
     subtasks: list[dict[str, Any]] = list(plan.get("subtasks") or [])
     repair_log: list[str] = []
+    fc = str(plan.get("final_constraint", ""))
+    norm = TrainNorm()
 
     if not subtasks:
         g = nx.DiGraph()
-        g.add_node(START, node_kind="start")
-        g.add_node(END, node_kind="end")
-        g.add_edge(START, END, edge_kind="virtual")
-        feats = _integrity_and_dims(g, [], repair_log, GRAPH_STATUS_EMPTY)
-        fc = str(plan.get("final_constraint", ""))
-        feats.update(_plan_step_signals([]))
-        feats.update(_plan_semantic_signals([], fc))
-        feats.update(_plan_interaction_signals(g, [], []))
-        feats.update(_conceptual_dims(feats, TrainNorm()))
-        feats.update(_conceptual_dims_legacy(feats, TrainNorm()))
-        feats.update(_conceptual_dims_v7(feats, TrainNorm()))
-        feats["c_vector_ver_v2"] = C_VECTOR_VER_V2
-        feats.update(training_id=tid, dataset=dataset, final_constraint=fc)
+        g.add_node(GRAPH.start, node_kind="start")
+        g.add_node(GRAPH.end, node_kind="end")
+        g.add_edge(GRAPH.start, GRAPH.end, edge_kind="virtual")
+        feats = _assemble_features(g, [], set(), [], repair_log, STATUS.empty, tid, dataset, fc, norm)
         return GraphBuildResult(tid, dataset, g, feats, repair_log, feats["graph_status"])
 
     subtasks, prep_log = _prepare_subtasks(subtasks, dataset)
@@ -157,34 +91,27 @@ def build_task_dag(plan: dict[str, Any]) -> GraphBuildResult:
     _add_nodes(g, subtasks)
     _add_edges(g, subtasks, order, id_set, repair_log)
 
-    if ids and not nx.is_directed_acyclic_graph(g.subgraph(ids)):
+    sub = g.subgraph(ids) if ids else None
+    if ids and not _sub_dag(g, sub):
         _drop_cycles(g, ids, repair_log)
-    if ids and not nx.is_directed_acyclic_graph(g.subgraph(ids)):
+        sub = g.subgraph(ids)
+    if ids and not _sub_dag(g, sub):
         _chain_fallback(g, subtasks, ids, dataset, repair_log)
+        sub = g.subgraph(ids)
 
-    _add_virtual(g, ids)
-    if ids and not nx.is_directed_acyclic_graph(g.subgraph(ids)):
+    _add_virtual(g, ids, id_set)
+    if ids and not _sub_dag(g, sub):
         raise RuntimeError(f"subtask graph still cyclic after repair: {tid}")
 
     graph_status = (
-        GRAPH_STATUS_REPAIRED
-        if any(
-            e.startswith(("chain_fallback:", "infer_linear_chain:", "drop_cycle_edge:"))
-            for e in repair_log
-        )
-        else GRAPH_STATUS_OK
+        STATUS.repair
+        if any(e.startswith(SCORE.prefixes) for e in repair_log)
+        else STATUS.ok
     )
-    fc = str(plan.get("final_constraint", ""))
     on_graph = _graph_subtasks(subtasks, id_set)
-    feats = _integrity_and_dims(g, ids, repair_log, graph_status)
-    feats.update(_plan_step_signals(on_graph))
-    feats.update(_plan_semantic_signals(on_graph, fc))
-    feats.update(_plan_interaction_signals(g, ids, on_graph))
-    feats.update(_conceptual_dims(feats, TrainNorm()))
-    feats.update(_conceptual_dims_legacy(feats, TrainNorm()))
-    feats.update(_conceptual_dims_v7(feats, TrainNorm()))
-    feats["c_vector_ver_v2"] = C_VECTOR_VER_V2
-    feats.update(training_id=tid, dataset=dataset, final_constraint=fc)
+    feats = _assemble_features(
+        g, ids, id_set, on_graph, repair_log, graph_status, tid, dataset, fc, norm
+    )
     return GraphBuildResult(tid, dataset, g, feats, repair_log, feats["graph_status"])
 
 
@@ -220,20 +147,45 @@ def fit_train_norm(df) -> TrainNorm:
     )
 
 
+def _rescore_row(f: dict[str, Any], norm: TrainNorm) -> dict[str, Any]:
+    """Recompute scalar + all dimension columns from one feature row."""
+    return {
+        "complexity_graph": _complexity_graph(f, norm),
+        **_conceptual_dims(f, norm),
+        **_conceptual_dims_legacy(f, norm),
+    }
+
+
 def rescore_dataframe(df, norm: TrainNorm | None = None):
     norm = norm or TrainNorm()
     out = df.copy()
-    out["complexity_graph"] = [
-        _complexity_graph(row.to_dict(), norm) for _, row in out.iterrows()
-    ]
-    for col in DIM_COLS:
-        out[col] = [_conceptual_dims(row.to_dict(), norm)[col] for _, row in out.iterrows()]
-    for col in DIM5_LEGACY_COLS:
-        out[col] = [_conceptual_dims_legacy(row.to_dict(), norm)[col] for _, row in out.iterrows()]
-    for col in DIM7_COLS:
-        out[col] = [_conceptual_dims_v7(row.to_dict(), norm)[col] for _, row in out.iterrows()]
-    out["c_vector_ver_v2"] = C_VECTOR_VER_V2
+    scored = [_rescore_row(row, norm) for row in out.to_dict("records")]
+    score_keys = ("complexity_graph", *DIMS.main, *DIMS.legacy)
+    for key in score_keys:
+        out[key] = [s[key] for s in scored]
     return out
+
+
+def _assemble_features(
+    g: nx.DiGraph,
+    ids: list[str],
+    id_set: set[str],
+    on_graph: list[dict[str, Any]],
+    repair_log: list[str],
+    graph_status: str,
+    tid: str,
+    dataset: str,
+    final_constraint: str,
+    norm: TrainNorm,
+) -> dict[str, Any]:
+    feats = _integrity_and_dims(g, ids, repair_log, graph_status, norm)
+    feats.update(_plan_step_signals(on_graph))
+    feats.update(_plan_semantic_signals(on_graph, final_constraint))
+    feats.update(_plan_interaction_signals(g, ids, on_graph))
+    feats.update(_conceptual_dims(feats, norm))
+    feats.update(_conceptual_dims_legacy(feats, norm))
+    feats.update(training_id=tid, dataset=dataset, final_constraint=final_constraint)
+    return feats
 
 
 # --- plan step signals (verification dimension) ---
@@ -243,7 +195,7 @@ def _graph_subtasks(
     subtasks: list[dict[str, Any]], id_set: set[str]
 ) -> list[dict[str, Any]]:
     """Subtasks that became DAG nodes (non-empty id in planner order)."""
-    return [st for st in subtasks if str(st.get("id", "")).strip() in id_set]
+    return [st for st in subtasks if _sub_id(st) in id_set]
 
 
 def _plan_step_signals(subtasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -257,7 +209,7 @@ def _plan_step_signals(subtasks: list[dict[str, Any]]) -> dict[str, Any]:
             "n_compute_steps": 0,
             "n_select_steps": 0,
         }
-    counts = Counter(str(st.get("step_type", "")).strip().lower() for st in subtasks)
+    counts = Counter(_step_type(st) for st in subtasks)
     n_verify = counts.get("verify", 0)
     return {
         "n_verify_steps": n_verify,
@@ -274,7 +226,7 @@ def _sink_subtask(subtasks: list[dict[str, Any]]) -> dict[str, Any] | None:
         return None
 
     def _tid(st: dict[str, Any]) -> int:
-        m = re.match(r"t(\d+)$", str(st.get("id", "")).strip().lower())
+        m = PLAN.task_id.match(_sub_id(st).lower())
         return int(m.group(1)) if m else 0
 
     return max(subtasks, key=_tid)
@@ -299,43 +251,49 @@ def _plan_semantic_signals(
             "sink_intermediate_risk": 0,
         }
 
-    relations = [str(st.get("relation_type", "")).strip().lower() for st in subtasks]
-    rel_clean = [r for r in relations if r]
+    relations: list[str] = []
+    rel_clean: list[str] = []
+    retrieves: list[dict[str, Any]] = []
+    grans: list[str] = []
+    for st in subtasks:
+        r = str(st.get("relation_type", "")).strip().lower()
+        relations.append(r)
+        if r:
+            rel_clean.append(r)
+        if _step_type(st) == "retrieve":
+            retrieves.append(st)
+        g = str(st.get("answer_granularity", "")).strip().lower()
+        if g:
+            grans.append(g)
+
     relation_diversity = len(set(rel_clean)) / max(len(rel_clean), 1)
     if rel_clean:
         rel_counts = Counter(rel_clean)
-        probs = [c / len(rel_clean) for c in rel_counts.values()]
+        n_rel = len(rel_clean)
+        probs = (c / n_rel for c in rel_counts.values())
         entropy = -sum(p * math.log(p + 1e-12) for p in probs)
-        relation_entropy = entropy / max(math.log(len(rel_counts)), 1e-12) if len(rel_counts) > 1 else 0.0
+        relation_entropy = (
+            entropy / max(math.log(len(rel_counts)), 1e-12) if len(rel_counts) > 1 else 0.0
+        )
     else:
         relation_entropy = 0.0
-    compositional_relation_fraction = sum(1 for r in relations if r in _SEMANTIC_RELATIONS) / n
+    compositional_relation_fraction = sum(1 for r in relations if r in PLAN.sem_rels) / n
 
-    retrieves = [
-        st for st in subtasks if str(st.get("step_type", "")).strip().lower() == "retrieve"
-    ]
-    queries = [
-        str(st.get("search_query", "")).strip()
-        for st in retrieves
-        if str(st.get("search_query", "")).strip()
-    ]
+    queries: list[str] = []
+    scoped = 0
+    for st in retrieves:
+        q = str(st.get("search_query", "")).strip()
+        if not q:
+            continue
+        queries.append(q)
+        if (st.get("depends_on") or []) and not PLAN.bad_query.search(q):
+            scoped += 1
     n_q = len(queries)
     avg_tokens = sum(len(q.split()) for q in queries) / n_q if n_q else 0.0
     weak_fraction = (
-        sum(1 for q in queries if _PLACEHOLDER_QUERY_RE.search(q)) / n_q if n_q else 0.0
+        sum(1 for q in queries if PLAN.bad_query.search(q)) / n_q if n_q else 0.0
     )
-    scoped = 0
-    for st in retrieves:
-        if (st.get("depends_on") or []) and str(st.get("search_query", "")).strip():
-            if not _PLACEHOLDER_QUERY_RE.search(str(st.get("search_query", ""))):
-                scoped += 1
     scoped_retrieve_fraction = scoped / len(retrieves) if retrieves else 0.0
-
-    grans = [
-        str(st.get("answer_granularity", "")).strip().lower()
-        for st in subtasks
-        if str(st.get("answer_granularity", "")).strip()
-    ]
     granularity_diversity = len(set(grans)) / n if grans else 0.0
 
     sink = _sink_subtask(subtasks)
@@ -360,11 +318,11 @@ def _plan_semantic_signals(
 
 
 def _measure_graph(g: nx.DiGraph, ids: list[str]) -> dict[str, Any]:
-    id_set = set(ids)
-    n = len(id_set)
+    n = len(ids)
     if n == 0:
         return _empty_graph_metrics()
 
+    id_set = set(ids)
     sub = g.subgraph(id_set)
     dep_edges = [
         (u, v)
@@ -374,15 +332,34 @@ def _measure_graph(g: nx.DiGraph, ids: list[str]) -> dict[str, Any]:
     n_edges = len(dep_edges)
     in_deg = dict(sub.in_degree())
     out_deg = dict(sub.out_degree())
-    n_sources = sum(1 for i in ids if in_deg.get(i, 0) == 0)
-    n_sinks = sum(1 for i in ids if out_deg.get(i, 0) == 0)
-    n_merge = sum(1 for i in ids if in_deg.get(i, 0) >= 2)
-    n_split = sum(1 for i in ids if out_deg.get(i, 0) >= 2)
-    hub = n_merge + n_split
 
-    tools = [str(g.nodes[i].get("tool", "none")).lower() for i in ids]
-    n_tool = sum(1 for i in ids if g.nodes[i].get("is_tool"))
-    unique_tools = len({t for t in tools if t and t != "none"})
+    n_sources = n_sinks = n_merge = n_split = 0
+    n_tool = 0
+    unique_tools: set[str] = set()
+    has_web = has_code = has_file = 0
+    for i in ids:
+        inde = in_deg.get(i, 0)
+        outd = out_deg.get(i, 0)
+        if inde == 0:
+            n_sources += 1
+        if outd == 0:
+            n_sinks += 1
+        if inde >= 2:
+            n_merge += 1
+        if outd >= 2:
+            n_split += 1
+        nd = g.nodes[i]
+        t = str(nd.get("tool", "none")).lower()
+        if nd.get("is_tool"):
+            n_tool += 1
+        if t and t != "none":
+            unique_tools.add(t)
+            if t in TOOLS.web:
+                has_web = 1
+            if t in TOOLS.code:
+                has_code = 1
+            if t in TOOLS.file:
+                has_file = 1
 
     depth_map, max_width = _layer_depths(g, id_set)
     depths = [depth_map[i] for i in ids if i in depth_map]
@@ -391,6 +368,7 @@ def _measure_graph(g: nx.DiGraph, ids: list[str]) -> dict[str, Any]:
     crit_len, crit_tool_steps, on_crit = _critical_path(g, ids, id_set)
     n_comp = nx.number_weakly_connected_components(sub)
     denom = max(n * (n - 1), 1)
+    hub = n_merge + n_split
 
     return {
         "n_nodes": n,
@@ -406,10 +384,10 @@ def _measure_graph(g: nx.DiGraph, ids: list[str]) -> dict[str, Any]:
         "n_merge_nodes": n_merge,
         "n_tool_nodes": n_tool,
         "tool_fraction": round(n_tool / n, 4),
-        "n_unique_tools": unique_tools,
-        "has_web": int(any(t in WEB_TOOLS for t in tools)),
-        "has_code": int(any(t in CODE_TOOLS for t in tools)),
-        "has_file": int(any(t in FILE_TOOLS for t in tools)),
+        "n_unique_tools": len(unique_tools),
+        "has_web": has_web,
+        "has_code": has_code,
+        "has_file": has_file,
         "critical_path_len": crit_len,
         "critical_path_tool_steps": crit_tool_steps,
         "tool_on_critical_path": int(on_crit),
@@ -436,11 +414,17 @@ def _layer_depths(g: nx.DiGraph, id_set: set[str]) -> tuple[dict[str, int], int]
     if not nx.is_directed_acyclic_graph(g):
         return depth, 0
     for layer in nx.topological_generations(g):
-        sub = [n for n in layer if n in id_set]
+        sub = [node for node in layer if node in id_set]
+        if not sub:
+            continue
         max_width = max(max_width, len(sub))
-        for n in sub:
-            preds = [p for p in g.predecessors(n) if p in id_set or p == START]
-            depth[n] = 0 if not preds else 1 + max(-1 if p == START else depth.get(p, 0) for p in preds)
+        for node in sub:
+            preds = [p for p in g.predecessors(node) if p in id_set or p == GRAPH.start]
+            depth[node] = (
+                0
+                if not preds
+                else 1 + max(-1 if p == GRAPH.start else depth.get(p, 0) for p in preds)
+            )
     return depth, max_width
 
 
@@ -448,7 +432,7 @@ def _longest_subtask_path(g: nx.DiGraph, id_set: set[str]) -> int:
     if not id_set or not nx.is_directed_acyclic_graph(g):
         return 0
     try:
-        return sum(1 for n in nx.dag_longest_path(g) if n in id_set)
+        return sum(1 for node in nx.dag_longest_path(g) if node in id_set)
     except nx.NetworkXError:
         return 0
 
@@ -457,26 +441,26 @@ def _critical_path(g: nx.DiGraph, ids: list[str], id_set: set[str]) -> tuple[int
     h = g.subgraph(id_set).copy()
     if h.number_of_nodes() == 0 or not nx.is_directed_acyclic_graph(h):
         return 0, 0, False
-    if START in g and END in g and nx.has_path(g, START, END):
+    if GRAPH.start in g and GRAPH.end in g and nx.has_path(g, GRAPH.start, GRAPH.end):
         try:
-            sub = [n for n in nx.dag_longest_path(g) if n in id_set]
-            tools = sum(1 for n in sub if g.nodes[n].get("is_tool"))
+            sub = [node for node in nx.dag_longest_path(g) if node in id_set]
+            tools = sum(1 for node in sub if g.nodes[node].get("is_tool"))
             return len(sub), tools, tools > 0
         except nx.NetworkXError:
             pass
     s, t = "__cp_s__", "__cp_t__"
     h.add_node(s)
     h.add_node(t)
-    for n in ids:
-        if h.in_degree(n) == 0:
-            h.add_edge(s, n, edge_kind="virtual")
-        if h.out_degree(n) == 0:
-            h.add_edge(n, t, edge_kind="virtual")
+    for node in ids:
+        if h.in_degree(node) == 0:
+            h.add_edge(s, node, edge_kind="virtual")
+        if h.out_degree(node) == 0:
+            h.add_edge(node, t, edge_kind="virtual")
     try:
-        sub = [n for n in nx.dag_longest_path(h) if n in id_set]
+        sub = [node for node in nx.dag_longest_path(h) if node in id_set]
     except nx.NetworkXError:
         return 0, 0, False
-    tools = sum(1 for n in sub if g.nodes[n].get("is_tool"))
+    tools = sum(1 for node in sub if g.nodes[node].get("is_tool"))
     return len(sub), tools, tools > 0
 
 
@@ -487,14 +471,7 @@ def _weighted_critical_path_nodes(g: nx.DiGraph, id_set: set[str]) -> list[str]:
         return []
 
     def _node_weight(node: str) -> float:
-        step = str(g.nodes[node].get("step_type", "")).strip().lower()
-        if step == "retrieve":
-            return 1.3
-        if step == "verify":
-            return 1.15
-        if step == "select":
-            return 1.05
-        return 1.0
+        return PLAN.step_wts.get(str(g.nodes[node].get("step_type", "")).strip().lower(), 1.0)
 
     score: dict[str, float] = {}
     parent: dict[str, str | None] = {}
@@ -523,9 +500,9 @@ def _weighted_critical_path_nodes(g: nx.DiGraph, id_set: set[str]) -> list[str]:
 
 
 def _plan_trust(repair_log: list[str], graph_status: str) -> float:
-    if graph_status == GRAPH_STATUS_EMPTY:
+    if graph_status == STATUS.empty:
         return 0.0
-    penalty = sum(_REPAIR_WEIGHTS.get(e.split(":", 1)[0], 0.05) for e in repair_log)
+    penalty = sum(SCORE.repair.get(e.split(":", 1)[0], 0.05) for e in repair_log)
     return max(0.0, min(1.0, 1.0 - penalty))
 
 
@@ -540,7 +517,7 @@ def _norm01_log(val: float, cap: float) -> float:
 
 def complexity_graph_score(f: dict[str, Any], norm: TrainNorm | None = None) -> float:
     """Step 2.4 aggregate scalar in ~[0, 1] — plots/gating only, not primary router input."""
-    if f.get("graph_status") == GRAPH_STATUS_EMPTY:
+    if f.get("graph_status") == STATUS.empty:
         return 0.0
     return _complexity_graph(f, norm or TrainNorm())
 
@@ -555,7 +532,7 @@ def _complexity_graph(f: dict[str, Any], norm: TrainNorm) -> float:
         _norm01(math.log1p(n), math.log1p(norm.n_nodes)),
         min(1.0, float(f.get("verify_fraction", 0))),
     )
-    w = _SCORE_WEIGHTS
+    w = SCORE.weights
     keys = (
         "max_depth",
         "n_tool_nodes",
@@ -572,7 +549,7 @@ def _plan_interaction_signals(
     ids: list[str],
     subtasks: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Tool-sequence / dependency signals for dim7_execution and dim7_coordination."""
+    """Tool-sequence / dependency signals for main C(Q) dimensions."""
     n = len(subtasks)
     if not n or not ids:
         return {
@@ -590,38 +567,32 @@ def _plan_interaction_signals(
         }
 
     id_set = set(ids)
-    tools_by_id = {
-        str(st["id"]).strip(): str(st.get("tool", "none")).strip().lower() or "none"
-        for st in subtasks
-        if str(st.get("id", "")).strip() in id_set
-    }
-    ordered_ids = [i for i in ids if i in tools_by_id]
-
-    n_retrieve = sum(
-        1 for st in subtasks if str(st.get("step_type", "")).strip().lower() == "retrieve"
-    )
+    tools_by_id: dict[str, str] = {}
+    n_retrieve = sum(1 for st in subtasks if _step_type(st) == "retrieve")
     n_with_deps = sum(1 for st in subtasks if st.get("depends_on"))
     relations = [str(st.get("relation_type", "")).strip().lower() for st in subtasks]
-    n_temporal = sum(1 for r in relations if r in _TEMPORAL_RELATIONS)
-    n_comparison = sum(1 for r in relations if r in _COMPARISON_RELATIONS)
+    n_temporal = sum(1 for r in relations if r in PLAN.temp_rels)
+    n_comparison = sum(1 for r in relations if r in PLAN.comp_rels)
+    for st in subtasks:
+        sid = _sub_id(st)
+        if sid in id_set:
+            tools_by_id[sid] = str(st.get("tool", "none")).strip().lower() or "none"
 
+    ordered_ids = [i for i in ids if i in tools_by_id]
     exec_nodes = sum(
-        1
-        for t in tools_by_id.values()
-        if t in _EXECUTION_TOOLS and t not in _RETRIEVAL_TOOLS
+        1 for t in tools_by_id.values() if t in TOOLS.exec and t not in TOOLS.retr
     )
     n_tool_nodes = sum(1 for i in ids if g.nodes[i].get("is_tool"))
     execution_external_fraction = exec_nodes / max(n_tool_nodes, 1) if n_tool_nodes else 0.0
 
-    switches = 0
-    for a, b in zip(ordered_ids, ordered_ids[1:]):
-        ta, tb = tools_by_id[a], tools_by_id[b]
-        if ta != tb and ta != "none" and tb != "none":
-            switches += 1
+    switches = sum(
+        1
+        for a, b in zip(ordered_ids, ordered_ids[1:])
+        if (ta := tools_by_id[a]) != (tb := tools_by_id[b]) and ta != "none" and tb != "none"
+    )
     tool_switching_seq = switches / max(len(ordered_ids) - 1, 1)
 
-    cross_tool = 0
-    dep_edges = 0
+    cross_tool = dep_edges = 0
     for u, v, d in g.edges(data=True):
         if d.get("edge_kind") != "dependency" or u not in id_set or v not in id_set:
             continue
@@ -634,18 +605,17 @@ def _plan_interaction_signals(
     tool_switching_edge = cross_tool_dep_fraction
     tool_switching = (tool_switching_seq + tool_switching_edge) / 2.0
 
-    unique_exec = len({t for t in tools_by_id.values() if t in _EXECUTION_TOOLS and t != "none"})
+    unique_exec = len({t for t in tools_by_id.values() if t in TOOLS.exec and t != "none"})
     execution_tool_diversity = unique_exec / max(n_tool_nodes, 1) if n_tool_nodes else 0.0
 
-    crit_len, crit_tool_steps, _ = _critical_path(g, ids, id_set)
-    critical_retrieve_fraction = 0.0
+    crit_len, _, _ = _critical_path(g, ids, id_set)
     if crit_len > 0 and ordered_ids:
         path = _weighted_critical_path_nodes(g, id_set) or ordered_ids
-        web_on_path = sum(1 for n in path if tools_by_id.get(n, "none") in _RETRIEVAL_TOOLS)
+        web_on_path = sum(1 for node in path if tools_by_id.get(node, "none") in TOOLS.retr)
         critical_retrieve_fraction = web_on_path / max(len(path), 1)
     else:
         critical_retrieve_fraction = float(
-            sum(1 for t in tools_by_id.values() if t in _RETRIEVAL_TOOLS)
+            sum(1 for t in tools_by_id.values() if t in TOOLS.retr)
         ) / max(n_tool_nodes, 1)
 
     return {
@@ -665,90 +635,6 @@ def _plan_interaction_signals(
 
 def _avg_terms(terms: list[float]) -> float:
     return round(sum(terms) / max(len(terms), 1), 4)
-
-
-def _conceptual_dims_v7(f: dict[str, Any], norm: TrainNorm) -> dict[str, float]:
-    """
-    C(Q) v2: procedural burden (7D). Dataset-agnostic; derived from plan DAG only.
-
-    Does not encode dataset id or raw tool names — only aggregated plan signals.
-    """
-    relation_signal = min(
-        1.0, float(f.get("relation_entropy", 0.0)) * max(0.0, float(f.get("plan_trust", 1.0)))
-    )
-    structural = _avg_terms(
-        [
-            _norm01(float(f.get("max_depth", 0)), norm.max_depth),
-            _norm01_log(float(f.get("critical_path_len", 0)), norm.max_depth),
-            _norm01(float(f.get("width", 0)), norm.width),
-            min(1.0, float(f.get("edge_density", 0)) * 4.0),
-            min(1.0, float(f.get("parallel_ratio", 0))),
-            _norm01_log(float(f.get("n_merge_nodes", 0)), max(2.0, norm.n_nodes / 2)),
-        ]
-    )
-    compositional = _avg_terms(
-        [
-            min(1.0, float(f.get("compositional_relation_fraction", 0))),
-            min(1.0, float(f.get("dependent_hop_fraction", 0))),
-            min(1.0, float(f.get("temporal_relation_fraction", 0))),
-            min(1.0, float(f.get("comparison_relation_fraction", 0))),
-            relation_signal,
-            _norm01_log(float(f.get("n_nodes", 0)), norm.n_nodes),
-        ]
-    )
-    retrieval = _avg_terms(
-        [
-            min(1.0, float(f.get("retrieve_step_fraction", 0))),
-            min(1.0, float(f.get("scoped_retrieve_fraction", 0))),
-            min(1.0, float(f.get("critical_retrieve_fraction", 0))),
-            _norm01(float(f.get("avg_search_query_tokens", 0)), norm.avg_search_query_tokens),
-            1.0 - min(1.0, float(f.get("weak_search_query_fraction", 0))),
-            float(f.get("has_web", 0)),
-        ]
-    )
-    execution = _avg_terms(
-        [
-            min(1.0, float(f.get("execution_external_fraction", 0))),
-            min(1.0, float(f.get("execution_tool_diversity", 0))),
-            float(f.get("has_file", 0)),
-            float(f.get("has_code", 0)),
-            _norm01_log(float(f.get("n_tool_nodes", 0)), norm.n_tool_nodes),
-            min(1.0, float(f.get("tool_fraction", 0))),
-        ]
-    )
-    coordination = _avg_terms(
-        [
-            min(1.0, float(f.get("tool_switching", 0))),
-            min(1.0, float(f.get("cross_tool_dep_fraction", 0))),
-            min(1.0, float(f.get("parallel_ratio", 0)) * float(f.get("tool_fraction", 0))),
-            _norm01_log(float(f.get("critical_path_tool_steps", 0)), norm.critical_path_tool_steps),
-            min(1.0, float(f.get("n_unique_tools", 0)) / max(float(f.get("n_nodes", 1)), 1.0)),
-        ]
-    )
-    verification = _avg_terms(
-        [
-            min(1.0, float(f.get("verify_fraction", 0))),
-            min(1.0, float(f.get("granularity_diversity", 0))),
-            float(f.get("sink_intermediate_risk", 0)),
-        ]
-    )
-    uncertainty = _avg_terms(
-        [
-            1.0 - float(f.get("plan_trust", 1.0)),
-            _norm01_log(float(f.get("n_repair_ops", 0)), norm.n_repair_ops),
-            min(1.0, float(f.get("weak_search_query_fraction", 0))),
-            float(f.get("heavily_repaired", 0)),
-        ]
-    )
-    return {
-        "dim7_structural": structural,
-        "dim7_compositional": compositional,
-        "dim7_retrieval": retrieval,
-        "dim7_execution": execution,
-        "dim7_coordination": coordination,
-        "dim7_verification": verification,
-        "dim7_uncertainty": uncertainty,
-    }
 
 
 def _conceptual_dims(f: dict[str, Any], norm: TrainNorm) -> dict[str, float]:
@@ -873,7 +759,7 @@ def _integrity_and_dims(
 
     metrics["graph_status"] = graph_status
     metrics["n_repair_ops"] = len(repair_log)
-    metrics["used_chain_fallback"] = int(any(e.startswith("chain_fallback:") for e in repair_log))
+    metrics["used_chain_fallback"] = int(tag_counts.get("chain_fallback", 0) > 0)
     metrics["n_cycle_edges_dropped"] = tag_counts.get("drop_cycle_edge", 0)
     metrics["n_non_forward_deps_dropped"] = tag_counts.get("drop_non_forward_dep", 0)
     metrics["n_unknown_deps"] = tag_counts.get("unknown_parent", 0)
@@ -886,7 +772,7 @@ def _integrity_and_dims(
     metrics["n_edges_dep"] = metrics["n_edges"]
     metrics["max_width"] = metrics["width"]
     metrics["complexity_graph"] = (
-        0.0 if graph_status == GRAPH_STATUS_EMPTY else complexity_graph_score(metrics, norm)
+        0.0 if graph_status == STATUS.empty else complexity_graph_score(metrics, norm)
     )
     metrics["is_dag"] = True
     return metrics
@@ -900,24 +786,24 @@ def _prepare_subtasks(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     prep: list[str] = []
     out = [dict(st) for st in subtasks]
-    valid = {str(st["id"]).strip() for st in out if str(st.get("id", "")).strip()}
+    valid = {_sub_id(st) for st in out if _sub_id(st)}
     for st in out:
-        sid = str(st["id"]).strip()
+        sid = _sub_id(st)
         st["depends_on"] = [
             str(d).strip()
             for d in (st.get("depends_on") or [])
             if str(d).strip() in valid and str(d).strip() != sid
         ]
-    before = {str(st["id"]).strip(): list(st.get("depends_on") or []) for st in out}
+    before = {_sub_id(st): list(st.get("depends_on") or []) for st in out}
     out = infer_subtask_dependencies(out, dataset=dataset)
     for st in out:
-        sid = str(st["id"]).strip()
+        sid = _sub_id(st)
         for dep in st.get("depends_on") or []:
             if dep not in before.get(sid, []):
                 prep.append(f"infer_dep:{dep}->{sid}")
     if len(out) >= 2 and not any(st.get("depends_on") for st in out):
         ds = (dataset or "").strip().lower()
-        if ds in CHAIN_FALLBACK_DATASETS or ds == "math":
+        if ds in DS.chain or ds == "math":
             for i in range(1, len(out)):
                 out[i]["depends_on"] = [str(out[i - 1]["id"]).strip()]
             prep.append(f"infer_linear_chain:{ds}")
@@ -927,7 +813,7 @@ def _prepare_subtasks(
 def _plan_order(subtasks: list[dict[str, Any]]) -> dict[str, int]:
     order: dict[str, int] = {}
     for i, st in enumerate(subtasks):
-        sid = str(st["id"]).strip()
+        sid = _sub_id(st)
         if sid and sid not in order:
             order[sid] = i
     return order
@@ -935,7 +821,7 @@ def _plan_order(subtasks: list[dict[str, Any]]) -> dict[str, int]:
 
 def _add_nodes(g: nx.DiGraph, subtasks: list[dict[str, Any]]) -> None:
     for st in subtasks:
-        sid = str(st["id"]).strip()
+        sid = _sub_id(st)
         if not sid:
             continue
         tool = str(st.get("tool", "none")).strip().lower() or "none"
@@ -960,7 +846,7 @@ def _add_edges(
     repair_log: list[str],
 ) -> None:
     for st in subtasks:
-        sid = str(st["id"]).strip()
+        sid = _sub_id(st)
         if sid not in id_set:
             continue
         for dep in st.get("depends_on") or []:
@@ -1001,11 +887,11 @@ def _chain_fallback(
     dataset: str,
     repair_log: list[str],
 ) -> None:
-    if dataset not in CHAIN_FALLBACK_DATASETS:
+    if dataset not in DS.chain:
         _drop_cycles(g, ids, repair_log)
         return
     id_set = set(ids)
-    ordered = [str(st["id"]).strip() for st in subtasks if str(st.get("id", "")).strip() in id_set]
+    ordered = [_sub_id(st) for st in subtasks if _sub_id(st) in id_set]
     if len(ordered) < 2:
         return
     for u in ids:
@@ -1017,19 +903,19 @@ def _chain_fallback(
     repair_log.append(f"chain_fallback:{dataset}")
 
 
-def _add_virtual(g: nx.DiGraph, ids: list[str]) -> None:
-    g.add_node(START, node_kind="start")
-    g.add_node(END, node_kind="end")
-    id_set = set(ids)
+def _add_virtual(g: nx.DiGraph, ids: list[str], id_set: set[str] | None = None) -> None:
+    g.add_node(GRAPH.start, node_kind="start")
+    g.add_node(GRAPH.end, node_kind="end")
+    id_set = id_set if id_set is not None else set(ids)
     for sid in ids:
         if sid not in g:
             continue
         if not any(p in id_set for p in g.predecessors(sid)):
-            g.add_edge(START, sid, edge_kind="start")
+            g.add_edge(GRAPH.start, sid, edge_kind="start")
         if not any(s in id_set for s in g.successors(sid)):
-            g.add_edge(sid, END, edge_kind="end")
-    if not any(g.successors(START)):
-        g.add_edge(START, END, edge_kind="virtual")
+            g.add_edge(sid, GRAPH.end, edge_kind="end")
+    if not any(g.successors(GRAPH.start)):
+        g.add_edge(GRAPH.start, GRAPH.end, edge_kind="virtual")
 
 
 if __name__ == "__main__":
@@ -1046,4 +932,4 @@ if __name__ == "__main__":
     norm = fit_train_norm(df)
     df = rescore_dataframe(df, norm)
     print(f"rows={len(df)} norm={norm}")
-    print(df[["training_id", "dataset", "n_nodes", "max_depth", "complexity_graph", *DIM_COLS]].to_string())
+    print(df[["training_id", "dataset", "n_nodes", "max_depth", "complexity_graph", *DIMS.main]].to_string())

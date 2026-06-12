@@ -1,92 +1,57 @@
 """
-Eval orchestrator: QCE features → G3 router → optional agent execution → grading.
+Eval orchestrator: route → execute agents → grade → persist.
 
-Chains:
-  1. Load eval parquet or QCE split (train/val/test)
-  2. Ensure C(Q) + query embeddings exist (--build-features for new eval sets)
-  3. Batch-route with ``models/router/G3_hgbm_graph_emb_balanced.joblib``
-  4. Optionally execute assigned agent and grade vs gold
-
-Examples::
-
-  # GAIA: build features once, then route-only
-  uv run python orchestrator/pipeline.py --dataset gaia --build-features --route-only
-
-  # GAIA: route + run agents + grade
-  uv run python orchestrator/pipeline.py --dataset gaia --grade --limit 5
-
-  # GAIA step 1 — route only, save labels
-  uv run python orchestrator/pipeline.py --dataset gaia --route-only \\
-    --output_path results/experiments/gaia_routes.parquet
-
-  # GAIA step 2 — execute saved routes (no re-route, no feature rebuild)
-  uv run python orchestrator/pipeline.py --routes-path results/experiments/gaia_routes.parquet \\
-    --grade --limit 5
-
-  # GAIA step 2b — resume: run remaining rows and merge into existing output
-  uv run python orchestrator/pipeline.py \\
-    --routes-path results/experiments/gaia_routes.parquet --grade \\
-    --append-to results/orchestrator/gaia/pipeline_results.parquet
-
-  # Long runs: stream JSONL + checkpoint parquet after each query (auto-resume if output exists)
-  uv run python orchestrator/pipeline.py \\
-    --routes-path results/experiments/baseline_routes/gaia_baseline_multiagent_routes.parquet \\
-    --dataset gaia --grade \\
-    --output_path results/orchestrator/graph_main_tuned/gaia/gaia_baseline_multiagent/pipeline_results.parquet
-
-  # QCE internal test (features prebuilt)
-  uv run python orchestrator/pipeline.py --split test --route-only
-
-  # Custom parquet
-  uv run python orchestrator/pipeline.py --data_path path/to.parquet --dataset math
+Single module (consolidated).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
-import sys
 from typing import Any, Mapping
 
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
 from agent.dataset_profile import agent_kwargs_from_row
 from agent.episode_context import datasets_requiring_episode_context
 from agent.registry import STRATEGY_REGISTRY
+from config.common import REPO_ROOT, USE_NEW_DATA_LAYOUT
+from config.local.constants.datasets import eval_parquet_stem
+from config.global_config.paths import eval_samples_dir, new_run_dir, orchestrator_default_root
+from config.global_config.runtime import resolve_output_root
 from evaluator.grade import grade as grade_answer
-from prompts.prompts_core import DATASETS, TASK_DESCRIPTION
-from routing.config import (
+from input.prompts.prompts_core import DATASETS, TASK_DESCRIPTION
+from router.config import (
     DEFAULT_SELECTIVE_TAU,
     SELECTIVE_CHEAP_ROUTER_PATH,
     SELECTIVE_FULL_ROUTER_PATH,
     SELECTIVE_TAU_JSON,
 )
-from routing.router import (
+from router.router import (
     DEFAULT_AGENT_MODEL,
     ROUTER_MODEL_PATH,
     RuntimeRouter,
     ensure_eval_features,
     eval_base_frame,
     load_eval_parquet,
+    load_router,
     load_router_frame,
     load_split,
+    normalize_loader_frame,
     resolve_dataset_name,
     top_k_from_row,
 )
-from routing.score_routes import score_routed, write_score_summary
-from routing.selective import SelectiveGateConfig, route_selective_split, selective_build_and_route
+from eval.score import score_routed, write_score_summary
+from research.selective import SelectiveGateConfig, route_selective_split, selective_build_and_route
 
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "results/orchestrator"
+DEFAULT_OUTPUT_ROOT = resolve_output_root(orchestrator_default_root())
 QCE_SPLITS = ("train", "val", "test")
 ROUTE_AGENT_COLS = ("router_pred", "assigned_agent")
 EXECUTION_DONE_COLS = ("predicted_answer", "response_predicted_answer")
-# Merged from eval when executing saved routes (Hotpot / MuSiQue need passages for retrieve).
 _EPISODE_CONTEXT_COLS = (
     "context",
     "paragraphs",
@@ -96,6 +61,98 @@ _EPISODE_CONTEXT_COLS = (
 )
 
 
+# --- run manifest ---
+def git_commit_short() -> str | None:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return out.strip() or None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def orchestrator_output_paths(
+    *,
+    experiment_id: str,
+    tag: str,
+    output_path: str | Path | None,
+    jsonl_output_path: str | Path | None,
+    append_to: str | Path | None,
+) -> tuple[Path, Path, Path | None]:
+    """
+    Return (parquet, jsonl, run_dir).
+
+    When ``RESEARCH_USE_NEW_PATHS=1`` and no explicit output, writes under
+    ``results/runs/{date}_{experiment_id}/orchestrator/{tag}/``.
+    """
+    run_dir: Path | None = None
+
+    if output_path is not None:
+        output = Path(output_path)
+    elif append_to is not None:
+        output = Path(append_to)
+    elif USE_NEW_DATA_LAYOUT:
+        run_dir = new_run_dir(experiment_id)
+        output = run_dir / "orchestrator" / tag / "pipeline_results.parquet"
+    else:
+        # DEFAULT_OUTPUT_ROOT
+
+        output = DEFAULT_OUTPUT_ROOT / tag / "pipeline_results.parquet"
+
+    jsonl = Path(jsonl_output_path) if jsonl_output_path else output.with_suffix(".jsonl")
+    return output, jsonl, run_dir
+
+
+def manifest_path_for_output(output: Path, run_dir: Path | None) -> Path:
+    if run_dir is not None:
+        return run_dir / "manifest.json"
+    return output.parent / "manifest.json"
+
+
+def build_run_manifest(
+    *,
+    experiment_id: str,
+    summary: dict[str, Any],
+    router_path: str | Path | None = None,
+    dataset: str | None = None,
+    split: str | None = None,
+    routes_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+    model: str | None = None,
+    execute_agents: bool | None = None,
+    grade: bool | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "experiment_id": experiment_id,
+        "created_at": datetime.now(UTC).isoformat(),
+        "git_commit": git_commit_short(),
+        "layout": "new" if USE_NEW_DATA_LAYOUT else "legacy",
+        "router_path": str(router_path) if router_path else None,
+        "dataset": dataset,
+        "split": split,
+        "routes_path": str(routes_path) if routes_path else None,
+        "output_path": str(output_path) if output_path else None,
+        "model": model,
+        "execute_agents": execute_agents,
+        "grade": grade,
+        "summary": summary,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def write_run_manifest(path: Path, manifest: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return path
+
+# --- load ---
 def _read_table(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".csv":
         return pd.read_csv(path)
@@ -145,6 +202,7 @@ def load_routes_frame(
         raise FileNotFoundError(f"Routes file not found: {path}")
 
     df = _ensure_training_id(_read_table(path))
+    df = normalize_loader_frame(df)
     if not any(c in df.columns for c in ROUTE_AGENT_COLS):
         raise ValueError(f"Routes file must include one of {ROUTE_AGENT_COLS}: {path}")
 
@@ -206,31 +264,6 @@ def load_routes_frame(
     return df
 
 
-def _response_to_dict(response: Any) -> dict[str, Any]:
-    if hasattr(response, "__dataclass_fields__"):
-        return asdict(response)
-    if isinstance(response, dict):
-        return response
-    return {"raw": str(response)}
-
-
-def _dataframe_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    for col in out.columns:
-        series = out[col]
-        if series.dtype != object:
-            continue
-        if series.map(lambda x: isinstance(x, (dict, list))).any():
-            out[col] = series.map(
-                lambda x: (
-                    json.dumps(x, ensure_ascii=False, default=str)
-                    if isinstance(x, (dict, list))
-                    else x
-                )
-            )
-    return out
-
-
 def load_eval_frame(
     *,
     dataset: str | None,
@@ -261,11 +294,110 @@ def load_eval_frame(
         tag = Path(data_path).stem
     else:
         df = load_eval_parquet(ds_key)
-        tag = dataset.strip().lower()
+        tag = eval_parquet_stem(ds_key)
     return df, tag
 
 
-def _resolve_selective_config(
+# --- persist ---
+def response_to_dict(response: Any) -> dict[str, Any]:
+    if hasattr(response, "__dataclass_fields__"):
+        return asdict(response)
+    if isinstance(response, dict):
+        return response
+    return {"raw": str(response)}
+
+
+def dataframe_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in out.columns:
+        series = out[col]
+        if series.dtype != object:
+            continue
+        if series.map(lambda x: isinstance(x, (dict, list))).any():
+            out[col] = series.map(
+                lambda x: (
+                    json.dumps(x, ensure_ascii=False, default=str)
+                    if isinstance(x, (dict, list))
+                    else x
+                )
+            )
+    return out
+
+
+def resolve_output_paths(
+    *,
+    experiment_id: str,
+    output_path: str | Path | None,
+    jsonl_output_path: str | Path | None,
+    append_to: str | Path | None,
+    split: str | None,
+    dataset: str | None,
+) -> tuple[Path, Path, Path | None]:
+    tag = split or (dataset or "eval")
+    output, jsonl, run_dir = orchestrator_output_paths(
+        experiment_id=experiment_id,
+        tag=tag,
+        output_path=output_path,
+        jsonl_output_path=jsonl_output_path,
+        append_to=append_to,
+    )
+    return output, jsonl, run_dir
+
+
+def load_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+    return records
+
+
+def load_existing_results(
+    output: Path,
+    jsonl_output: Path,
+) -> pd.DataFrame | None:
+    """Load partial/finished run from parquet (preferred) or streamed JSONL."""
+    if output.is_file():
+        return _read_table(output)
+    if jsonl_output.is_file():
+        records = load_jsonl_records(jsonl_output)
+        if records:
+            df = pd.DataFrame.from_records(records)
+            if "training_id" in df.columns:
+                df = df.drop_duplicates(subset="training_id", keep="last")
+            return df
+    return None
+
+
+def append_jsonl_record(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
+
+
+def write_pipeline_artifacts(
+    results_df: pd.DataFrame,
+    *,
+    output: Path,
+    jsonl_output: Path,
+    summary: dict[str, Any],
+    stream: bool,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    dataframe_for_parquet(results_df).to_parquet(output, index=False)
+    summary_path = output.with_suffix(".summary.json")
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if not stream:
+        jsonl_output.parent.mkdir(parents=True, exist_ok=True)
+        with jsonl_output.open("w", encoding="utf-8") as f:
+            for record in results_df.to_dict(orient="records"):
+                f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
+
+# --- route stage ---
+def resolve_selective_config(
     *,
     selective_qce: bool,
     selective_tau: float | None,
@@ -292,7 +424,7 @@ def _resolve_selective_config(
     )
 
 
-def _routing_summary(df: pd.DataFrame) -> dict[str, Any]:
+def routing_summary(df: pd.DataFrame) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "n": len(df),
         "router_distribution": df["router_pred"].value_counts().to_dict()
@@ -320,7 +452,7 @@ def _routing_summary(df: pd.DataFrame) -> dict[str, Any]:
     return summary
 
 
-def _row_execution_done(row: Mapping[str, Any], *, retry_failed: bool = False) -> bool:
+def row_execution_done(row: Mapping[str, Any], *, retry_failed: bool = False) -> bool:
     """True if this row already has a stored agent answer (skip on resume)."""
     if retry_failed and row.get("is_failed"):
         return False
@@ -330,13 +462,13 @@ def _row_execution_done(row: Mapping[str, Any], *, retry_failed: bool = False) -
     return False
 
 
-def _done_training_ids(df: pd.DataFrame, *, retry_failed: bool = False) -> set[Any]:
+def done_training_ids(df: pd.DataFrame, *, retry_failed: bool = False) -> set[Any]:
     if df is None or df.empty or "training_id" not in df.columns:
         return set()
     return {
         r["training_id"]
         for r in df.to_dict(orient="records")
-        if _row_execution_done(r, retry_failed=retry_failed)
+        if row_execution_done(r, retry_failed=retry_failed)
     }
 
 
@@ -361,80 +493,7 @@ def merge_pipeline_results(
     return pd.DataFrame.from_records(out)
 
 
-def _resolve_output_paths(
-    *,
-    output_path: str | Path | None,
-    jsonl_output_path: str | Path | None,
-    append_to: str | Path | None,
-    split: str | None,
-    dataset: str | None,
-) -> tuple[Path, Path]:
-    out_tag = split or (dataset or "eval")
-    if output_path is not None:
-        output = Path(output_path)
-    elif append_to is not None:
-        output = Path(append_to)
-    else:
-        output = DEFAULT_OUTPUT_ROOT / out_tag / "pipeline_results.parquet"
-    jsonl_output = (
-        Path(jsonl_output_path) if jsonl_output_path is not None else output.with_suffix(".jsonl")
-    )
-    return output, jsonl_output
-
-
-def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(json.loads(line))
-    return records
-
-
-def _load_existing_results(
-    output: Path,
-    jsonl_output: Path,
-) -> pd.DataFrame | None:
-    """Load partial/finished run from parquet (preferred) or streamed JSONL."""
-    if output.is_file():
-        return _read_table(output)
-    if jsonl_output.is_file():
-        records = _load_jsonl_records(jsonl_output)
-        if records:
-            df = pd.DataFrame.from_records(records)
-            if "training_id" in df.columns:
-                df = df.drop_duplicates(subset="training_id", keep="last")
-            return df
-    return None
-
-
-def _append_jsonl_record(path: Path, record: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
-
-
-def _write_pipeline_artifacts(
-    results_df: pd.DataFrame,
-    *,
-    output: Path,
-    jsonl_output: Path,
-    summary: dict[str, Any],
-    stream: bool,
-) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _dataframe_for_parquet(results_df).to_parquet(output, index=False)
-    summary_path = output.with_suffix(".summary.json")
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    if not stream:
-        jsonl_output.parent.mkdir(parents=True, exist_ok=True)
-        with jsonl_output.open("w", encoding="utf-8") as f:
-            for record in results_df.to_dict(orient="records"):
-                f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
-
-
+# --- pipeline ---
 def run_pipeline(
     *,
     dataset: str | None = "gaia",
@@ -466,7 +525,7 @@ def run_pipeline(
     selective_full_router: str | Path | None = None,
     score_lookup: bool = True,
 ) -> pd.DataFrame:
-    selective_config = _resolve_selective_config(
+    selective_config = resolve_selective_config(
         selective_qce=selective_qce,
         selective_tau=selective_tau,
         selective_tau_margin=selective_tau_margin,
@@ -511,7 +570,7 @@ def run_pipeline(
         else:
             df, tag = load_eval_frame(dataset=dataset, data_path=data_path, split=split)
             score_split = split
-            score_dataset = tag if split is None else None
+            score_dataset = resolve_dataset_name(dataset) if split is None else None
 
             if selective_config is not None:
                 base_cols = [
@@ -551,16 +610,18 @@ def run_pipeline(
                 )
                 if verbose:
                     print(f"Routing {len(df)} rows with {router_path or ROUTER_MODEL_PATH}…")
-                routed_df = load_router_frame(df, router_path=router_path)
+                routed_df = load_router_frame(df, router_path=router_path, feature_tag=tag)
             else:
                 if build_features and verbose:
                     print("Note: --build-features ignored for QCE splits (use qce pipeline).")
                 if verbose:
                     print(f"Routing {len(df)} rows with {router_path or ROUTER_MODEL_PATH}…")
-                routed_df = load_router_frame(df, router_path=router_path)
+                routed_df = load_router_frame(df, router_path=router_path, feature_tag=tag)
 
     routes_full_df = routed_df
-    output, jsonl_output = _resolve_output_paths(
+    experiment_id = Path(router_path or ROUTER_MODEL_PATH).stem
+    output, jsonl_output, run_dir = resolve_output_paths(
+        experiment_id=experiment_id,
         output_path=output_path,
         jsonl_output_path=jsonl_output_path,
         append_to=append_to,
@@ -577,7 +638,7 @@ def run_pipeline(
         existing_df = _read_table(append_path)
         resume_source = str(append_path)
     elif execute_agents and not fresh:
-        existing_df = _load_existing_results(output, jsonl_output)
+        existing_df = load_existing_results(output, jsonl_output)
         if existing_df is not None and not existing_df.empty:
             resume_source = str(output if output.is_file() else jsonl_output)
 
@@ -588,7 +649,7 @@ def run_pipeline(
 
     done_ids: set[Any] = set()
     if existing_df is not None and not existing_df.empty:
-        done_ids = _done_training_ids(existing_df, retry_failed=retry_failed)
+        done_ids = done_training_ids(existing_df, retry_failed=retry_failed)
         pending_df = routes_full_df[~routes_full_df["training_id"].isin(done_ids)].copy()
         if verbose:
             print(
@@ -674,7 +735,7 @@ def run_pipeline(
                         agents_s = " → ".join(a for a, _ in top3)
                         print(f"[{idx}/{total}] Cascade (top-{cascade_k}): {agents_s} …")
                     run_result = router.run_cascade(expected_answer=expected, k=cascade_k)
-                    response = _response_to_dict(run_result.get("response"))
+                    response = response_to_dict(run_result.get("response"))
                     record.update(
                         {
                             "executed_agent": run_result.get("executed_agent"),
@@ -686,7 +747,7 @@ def run_pipeline(
                     if verbose:
                         print(f"[{idx}/{total}] Executing {assigned} ({model})…")
                     run_result = router.run(expected_answer=expected)
-                    response = _response_to_dict(run_result.get("response"))
+                    response = response_to_dict(run_result.get("response"))
                     record["executed_agent"] = assigned
                     record["cascade_rank"] = 1
 
@@ -720,10 +781,10 @@ def run_pipeline(
         records.append(record)
 
         if stream and execute_agents:
-            _append_jsonl_record(jsonl_output, record)
+            append_jsonl_record(jsonl_output, record)
             if checkpoint_every > 0 and idx % checkpoint_every == 0:
                 checkpoint_df = merge_pipeline_results(routes_full_df, existing_df, records)
-                checkpoint_summary = _routing_summary(checkpoint_df)
+                checkpoint_summary = routing_summary(checkpoint_df)
                 if append_to is not None or existing_df is not None:
                     checkpoint_summary["n_pending_this_run"] = total
                     checkpoint_summary["n_done_before"] = len(done_ids)
@@ -732,7 +793,7 @@ def run_pipeline(
                     checkpoint_summary["graded_accuracy"] = float(
                         pd.to_numeric(checkpoint_df["is_correct"], errors="coerce").fillna(0).mean()
                     )
-                _write_pipeline_artifacts(
+                write_pipeline_artifacts(
                     checkpoint_df,
                     output=output,
                     jsonl_output=jsonl_output,
@@ -757,7 +818,7 @@ def run_pipeline(
             else pd.DataFrame()
         )
 
-    summary = _routing_summary(results_df if len(results_df) else routes_full_df)
+    summary = routing_summary(results_df if len(results_df) else routes_full_df)
     if append_to is not None or existing_df is not None:
         summary["n_pending_this_run"] = total
         summary["n_done_before"] = len(done_ids)
@@ -773,10 +834,13 @@ def run_pipeline(
 
     if score_lookup and not execute_agents:
         try:
+            router_obj = load_router(router_path or ROUTER_MODEL_PATH)
+            score_feature_set = router_obj.get("feature_set")
             scored, lookup = score_routed(
                 routes_full_df,
                 dataset=score_dataset,
                 split=score_split,
+                feature_set=score_feature_set,
             )
             results_df = scored
             summary["lookup_score"] = lookup
@@ -784,19 +848,43 @@ def run_pipeline(
             if verbose:
                 em = lookup.get("em_pct")
                 musd = lookup.get("musd")
-                print(f"Lookup score: EM={em}%  mUSD={musd}  (source={lookup.get('outcome_source')})")
+                total_musd = lookup.get("total_musd")
+                print(
+                    f"Lookup score: EM={em}%  agent_mUSD={musd}  "
+                    f"total_mUSD={total_musd}  (source={lookup.get('outcome_source')})"
+                )
         except Exception as exc:
             summary["lookup_score_error"] = str(exc)
             if verbose:
                 print(f"Lookup score skipped: {exc}")
 
-    _write_pipeline_artifacts(
+    write_pipeline_artifacts(
         results_df,
         output=output,
         jsonl_output=jsonl_output,
         summary=summary,
         stream=stream,
     )
+
+    if run_dir is not None:
+        manifest_path = manifest_path_for_output(output, run_dir)
+    else:
+        manifest_path = manifest_path_for_output(output, None)
+    manifest = build_run_manifest(
+        experiment_id=experiment_id,
+        summary=summary,
+        router_path=router_path or ROUTER_MODEL_PATH,
+        dataset=dataset,
+        split=split,
+        routes_path=routes_path,
+        output_path=output,
+        model=model,
+        execute_agents=execute_agents,
+        grade=grade,
+    )
+    write_run_manifest(manifest_path, manifest)
+    if verbose:
+        print(f"Run manifest: {manifest_path}")
 
     if verbose:
         print(f"Saved: {output}")
@@ -806,16 +894,15 @@ def run_pipeline(
     return results_df
 
 
+
 def _build_parser() -> argparse.ArgumentParser:
-    eval_datasets = sorted(
-        {p.stem for p in (REPO_ROOT / "datasets/eval_samples").glob("*.parquet")}
-    )
+    eval_datasets = sorted({p.stem for p in eval_samples_dir().glob("*.parquet")})
     parser = argparse.ArgumentParser(
         description="QCE features → G3 router → optional agent run (eval orchestrator)."
     )
     parser.add_argument(
         "--dataset",
-        choices=eval_datasets + ["mmlu_pro"],
+        choices=eval_datasets,
         default="gaia",
         help="Eval parquet under datasets/eval_samples/ (ignored if --split set).",
     )
@@ -942,8 +1029,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-if __name__ == "__main__":
-    args = _build_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    from config.global_config.runtime import configure_logging
+
+    configure_logging()
+    args = _build_parser().parse_args(argv)
     if args.routes_path and args.route_only:
         raise SystemExit("Use either --routes-path (execute saved routes) or --route-only, not both.")
     if args.append_to and not args.routes_path:
@@ -978,3 +1068,7 @@ if __name__ == "__main__":
         selective_full_router=args.selective_full_router,
         score_lookup=not args.no_score_lookup,
     )
+
+
+if __name__ == "__main__":
+    main()

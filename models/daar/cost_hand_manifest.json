@@ -1,0 +1,12 @@
+{
+  "scales": {
+    "cot_per_node": 70.33333333333333,
+    "react_per_depth": 1786.25,
+    "react_per_tool": 3484.0,
+    "multi_per_depth": 963.2,
+    "multi_per_tool": 7157.75
+  },
+  "w1": 1.0,
+  "w2": 1.0,
+  "out_path": "/Users/poorna/Desktop/research_work/datasets/daar/simulations/daar_cost_hand.parquet"
+}

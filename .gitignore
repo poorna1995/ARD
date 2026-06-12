@@ -83,9 +83,10 @@ scripts/*
 
 
 # -----------------------------------------------------------------------------
-# 6. Tests (local smoke / tooling)
+# 6. Tests — track refactor safety net; ignore local scratch
 # -----------------------------------------------------------------------------
-tests/
+tests/__pycache__/
+tests/.pytest_cache/
 test.py
 test_router.py
 test_tools.py

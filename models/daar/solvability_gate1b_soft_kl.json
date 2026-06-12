@@ -1,0 +1,17 @@
+{
+  "experiment_id": "solvability_gate1b_soft_kl",
+  "n_features": 5,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "feature_set": "cvec5",
+  "gate": "1b",
+  "gate1_supervision": "success_only_soft_kl",
+  "utility_lambda": null,
+  "softmax_temperature": null,
+  "hgbm_params": null
+}

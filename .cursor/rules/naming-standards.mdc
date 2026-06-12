@@ -1,0 +1,49 @@
+---
+description: Enterprise naming — 2–3 words max, domain-consistent, no chaos
+alwaysApply: true
+---
+
+# Naming Standards
+
+Use short, standard names tied to the framework domain. **Max 2–3 words** per identifier.
+
+## Functions
+
+- Pattern: `verb_noun` or repo verbs `build_*`, `load_*`, `train_*`, `export_*`
+- Good: `build_oracle`, `load_splits`, `train_solvability`, `patch_raw`
+- Bad: `build_stratified_daar_train_val_test_splits`, `upsert_feature_parquet_for_missing_ids`
+
+## Variables
+
+- One concept per name; reuse repo terms
+- Good: `oracle_df`, `split_id`, `cost_hand`, `agent_list`
+- Bad: `daar_oracle_parquet_file_path`, `missing_feature_training_id_list`
+
+## Paths & config
+
+- D-AAR prefix: `daar_*` only under `datasets/daar/`
+- Good: `daar_root`, `oracle_path`, `splits_dir`, `plans_cache`
+- Bad: mixing `exp2`, `offline`, `daar` for the same artifact
+
+## Models & artifacts
+
+- Pattern: `{domain}_{role}`
+- Good: `solvability_hgbm`, `cost_simulator`, `split_manifest`
+- Bad: `daar_per_agent_solvability_classifier_model_v1`
+
+## Constants
+
+- `UPPER_SNAKE`, 2–3 words: `AGENT_LIST`, `SPLIT_ORDER`, `DEFAULT_SEED`
+
+## Columns & symbols (frozen — do not rename)
+
+- Oracle: `r_a`, `X1`, `X2`, `d`, `solvable`, `daar_split`
+- Features: `dim_*`, `heur_*`, `phi_q`
+- Cost: `cost_hand`, `C_static`, `X2_dynamic`
+
+## Consistency rules
+
+1. Pick one term — do not mix synonyms (`split` vs `partition` vs `fold`)
+2. Reuse existing helpers before adding new names
+3. No unused exports or duplicate path aliases
+4. Match surrounding file style (imports, types, docstrings)

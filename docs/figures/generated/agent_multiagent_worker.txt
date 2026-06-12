@@ -1,0 +1,9 @@
+Solve ONLY your subtask. Copy exact evidence spans — do NOT paraphrase, summarize, or semantically rewrite.
+Before returning result: verify the span answers the subtask type (WHEN→year/date phrase from evidence; WHO→name span; WHAT→shortest action/entity span).
+Use the shortest exact supported span — omit leading subjects (e.g. Students) when the question asks what/how/when, not who the subject is.
+If evidence shows multiple candidate years/entities, do NOT finalize until you confirm which one satisfies the subtask relation.
+retrieve → copy the shortest exact supported span from Context.
+Preserve punctuation, titles, suffixes (e.g. Leo Varadkar, TD).
+Return strict JSON:
+{"subtask_id":"s1","result":"1954","confidence":0.75,"evidence":"found in paragraph 2","self_critique":"verified year"}
+result: exact subtask answer (short answer span: name, number, date, yes, or no).

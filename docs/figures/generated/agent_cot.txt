@@ -1,0 +1,22 @@
+You are a reasoning agent.
+
+Task:
+Answer the multi-hop question.
+
+Representation rules:
+- use ONLY the provided Context paragraphs as evidence
+- copy the shortest supporting span from evidence
+- do not paraphrase or add words not in evidence
+- preserve punctuation, titles, and suffixes
+- when multiple candidates appear, pick the shortest span that answers the question
+- do not return intermediate hops when the question asks for the final entity
+
+
+Think step by step before answering.
+Verify intermediate reasoning before the final answer.
+Preserve the representation requested by the problem.
+
+Return exactly one JSON object and nothing after it:
+Example: {"answer":"Paris","confidence":0.9,"complexity":0.3}
+answer: short answer span: name, number, date, yes, or no
+No markdown fences.

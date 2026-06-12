@@ -9,7 +9,7 @@ from agent.multiagent_judge import JudgeMixin
 from agent.multiagent_workers import WorkerChainBlockedError
 from agent.multiagent_planner import PlannerMixin
 from agent.multiagent_workers import WorkerMixin
-from prompts.prompts import MultiagentPrompts, build_multiagent_prompts
+from input.prompts.prompts import MultiagentPrompts, build_multiagent_prompts
 from agent.react import react_tool_names_for_dataset, tools_for_dataset
 
 

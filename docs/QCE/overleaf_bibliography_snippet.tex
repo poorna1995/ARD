@@ -1,0 +1,24 @@
+% =============================================================================
+% Paste into a SINGLE Overleaf .tex file (same project folder as QCE_Router_Paper.bib)
+% =============================================================================
+
+% --- (A) In the PREAMBLE (after \documentclass, with other \usepackage lines): ---
+\usepackage[round,authoryear]{natbib}
+
+% --- (B) In the BODY when you cite a paper: ---
+%   \citep{mialon2023gaia}                    -> (Mialon et al., 2023)
+%   \citep{yang2018hotpotqa,yao2023react}     -> multiple sources
+%   \citet{ong2025routellm}                   -> Ong et al. (2025)
+
+% --- (C) After Conclusion/Limitations, BEFORE appendix, before \end{document}: ---
+\bibliographystyle{plainnat}
+\bibliography{QCE_Router_Paper}
+
+% Do NOT use a hand-written \section*{References} with \begin{enumerate} — that
+% bypasses BibTeX and will not link to \citep{...} in the text.
+
+% =============================================================================
+% Overleaf project files (minimum):
+%   - your_single_paper.tex   (contains A, body with B, and C)
+%   - QCE_Router_Paper.bib    (all @article{key, ...} entries)
+% =============================================================================

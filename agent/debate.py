@@ -8,7 +8,7 @@ from typing import Any
 from agent.base import BaseAgent, AgentResponse
 from evaluator import canonicalise_answer
 from evaluator.parse import parse_llm_output
-from prompts.prompts import (
+from input.prompts.prompts import (
     DEBATE_AGENT_TEMPERATURE,
     DEBATE_SYNTHESIS_PROMPT,
     DEBATE_SYNTHESIS_SYSTEM,

@@ -1,0 +1,445 @@
+% Appendices (protocol, benchmarks, implementation)
+\appendix
+
+\section{Experiment Details}
+\label{app:experiment-details}
+
+\subsection{Benchmarks}
+\label{app:benchmarks}
+\label{app:dataset-rationale}
+\label{app:dataset-descriptions}
+
+\paragraph{Benchmark selection rationale.}
+The selection of benchmark datasets is governed by three requirements of \textbf{Adaptive Agent
+Routing (AAR)}:
+\textbf{(1)}~coverage of a wide spectrum of query complexity, from lightweight factual lookups to
+deeply compositional multi-step reasoning;
+\textbf{(2)}~structural diversity that stress-tests the \textbf{Query Complexity Estimator (QCE)}
+and the learned routing policy across distinct task types; and
+\textbf{(3)}~evaluation of four agent strategies in
+$\mathcal{A}=\{\texttt{raw},\texttt{cot},\texttt{react},\texttt{multiagent}\}$ under conditions
+that are meaningful and representative of deployed agentic systems.
+
+\paragraph{Coverage of query complexity.}
+A central thesis of AAR is that not all queries warrant the same agent configuration.
+To validate this claim, the benchmark suite must span the complexity range that QCE is designed to
+discriminate.
+Our \emph{executed} evaluation uses fixed-size subsamples per family
+(Table~\ref{tab:deployment-sizes}) rather than full upstream corpora.
+The \emph{routing benchmark} draws queries from \textbf{HotpotQA}, \textbf{MuSiQue}, and
+\textbf{MATH} for training and regret-based evaluation (\S\ref{sec:experiments}).
+\emph{Benchmark transfer} additionally runs all four strategies on \textbf{GAIA} and
+\textbf{MMLU-Pro}, which are held out from routing-benchmark construction; HotpotQA, MuSiQue, and
+MATH are re-evaluated with independent transfer queries ($N{=}965$ pooled).
+Pooled utility uses $\lambda{=}25$ (Table~\ref{tab:pooled-utility}).
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Executed evaluation subsamples per benchmark family (transfer evaluation).}
+  \label{tab:deployment-sizes}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    Workload & Queries \\
+    \midrule
+    GAIA & 165 \\
+    HotpotQA & 200 \\
+    MuSiQue & 200 \\
+    MMLU-Pro & 200 \\
+    MATH & 200 \\
+    \textbf{Pooled (micro)} & \textbf{965} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{MMLU-Pro~\citep{wang2024mmlupro}.}
+MMLU-Pro is an enhanced Massive Multitask Language Understanding benchmark introduced as frontier
+models approached 86--87\% on the original MMLU, reducing its usefulness for tracking progress and
+exhibiting sensitivity to prompt phrasing and scoring.
+MMLU-Pro integrates more challenging, reasoning-focused questions, expands answer choices from
+four to ten (lowering random-guess success), and comprises over 12{,}000 curated questions across
+14 domains (e.g., biology, business, chemistry, computer science, economics, engineering, health,
+history, law, mathematics, philosophy, physics, and psychology).
+Reported results show accuracy drops of roughly 16--33 percentage points relative to MMLU and
+lower prompt sensitivity (on the order of 2\% vs.\ 4--5\% variation on MMLU).
+Chain-of-thought models tend to outperform direct answering on MMLU-Pro, indicating that the
+benchmark rewards reasoning rather than surface recall.
+In our study, MMLU-Pro is a held-out transfer family for knowledge-intensive multiple-choice
+routing.
+
+\paragraph{MATH~\citep{hendrycks2021math}.}
+MATH measures competition-style mathematical problem solving with 12{,}500 problems from contests
+including AMC~10, AMC~12, and AIME.
+Each problem is tagged with difficulty level 1--5 and one of seven subjects (prealgebra, algebra,
+number theory, counting and probability, geometry, intermediate algebra, and precalculus), with
+full step-by-step solutions provided.
+Unlike benchmarks focused on short numeric answers, MATH requires complete multi-step derivations
+across a wide difficulty range.
+MATH is used in both routing-benchmark construction and transfer; in our results it often favors
+chain-of-thought over tool-heavy strategies (Table~\ref{tab:live-benchmark}).
+
+\paragraph{GAIA~\citep{mialon2023gaia}.}
+GAIA evaluates general AI assistants on real-world tasks requiring reasoning, multimodal inputs,
+web browsing, and tool use, with short verifiable answers.
+The public release contains 466 questions at three difficulty levels; many require multiple steps,
+tool use (e.g., browsers or code interpreters), and heterogeneous inputs (images, video,
+spreadsheets).
+Reported human accuracy is near 92\% versus roughly 15\% for early GPT-4 with plugins, illustrating
+a large human--machine gap on everyday-style agentic tasks.
+We evaluate a 165-query subsample under full strategy execution as a held-out, tool-intensive
+transfer workload.
+
+\paragraph{HotpotQA~\citep{yang2018hotpotqa}.}
+HotpotQA is a large-scale Wikipedia multi-hop QA benchmark with 113K question--answer pairs that
+require locating and reasoning over multiple supporting documents.
+Questions are diverse and not constrained to a fixed knowledge schema; sentence-level supporting
+facts enable supervised reasoning and explanation.
+In the distractor setting, each instance includes two gold paragraphs and eight TF-IDF distractors
+(ten paragraphs total); the full-wiki setting requires retrieval over Wikipedia.
+HotpotQA stresses retrieval, evidence integration, and multi-step inference, and is used in both
+the routing benchmark and transfer evaluation.
+
+\paragraph{MuSiQue~\citep{trivedi2022musique}.}
+MuSiQue targets a shortcut-exploitation weakness in prior multi-hop datasets by composing
+\emph{connected} single-hop questions into 2--4 hop chains.
+The MuSiQue-Ans collection contains 25K such questions and is reported to be substantially harder,
+with a wider human--machine gap and roughly a 30-point F1 drop for single-hop models relative to
+multi-hop systems.
+MuSiQue-Full adds unanswerable contrast questions for stricter evaluation.
+By structurally requiring genuine compositional reasoning, MuSiQue complements HotpotQA in both
+routing-benchmark construction and transfer.
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Pooled deployment utility (965 queries).}
+  \label{tab:pooled-utility}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    Policy & Mean utility \\
+    \midrule
+    Proposed complexity--semantic & 0.440 \\
+    Heuristic baseline & 0.458 \\
+    \midrule
+    Bootstrap 95\% CI (heur.\ $-$ proposed) & $[-0.0006,\,+0.035]$ \\
+    Two-sided $p$ (approx.) & 0.059 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Routing Benchmark Construction}
+\label{app:benchmark-construction}
+
+\paragraph{Routing benchmark.}
+The routing benchmark is a supervised routing dataset constructed from oracle executions of
+four reasoning strategies.
+Each instance contains query features $\phi(q)$, per-strategy exact-match outcomes
+$r_a(q)$, execution costs $c_a(q)$, and derived routing targets (hard labels and cost-soft
+$p^\star(\cdot \mid q)$).
+It supports all regret-based evaluations in the main paper; the deployed router never
+observes per-query oracle outcomes at inference.
+
+The benchmark aggregates queries from HotpotQA, MuSiQue, and MATH into a stratified split:
+train $808$, validation $100$, test $100$.
+For each query, all four strategies are executed once offline; outcomes and costs are
+recorded in a centralized oracle log.
+Hard oracle labels and cost-soft targets $p^\star(\cdot \mid q)$ are derived from these
+recorded outcomes (Eqs.~\ref{eq:hard-oracle} and~\ref{eq:cost-soft}).
+Splits are stratified by source dataset; the test split is held out for all primary
+routing metrics reported in \S\ref{sec:experiments}.
+Soft labels $p^\star(\cdot \mid q)$ are precomputed per split with cost temperature
+$\tau$ (Appendix~\ref{app:hyperparameters}).
+
+\section{Feature Definitions}
+\label{app:features}
+
+Table~\ref{tab:feature-configs-full} summarizes the routing representations evaluated
+in \S\ref{sec:experiments}, including a complexity-only ablation ($\mathbf{z}$ without $\psi$).
+Repository identifiers are provided only for reproducibility with the released codebase.
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Routing representations.}
+  \label{tab:feature-configs-full}
+  \begin{tabular}{@{}p{0.24\linewidth}p{0.38\linewidth}rrl@{}}
+    \toprule
+    Representation & Description & Dim.\ $m$ & Planner? & Repository ID \\
+    \midrule
+    Embedding-only &
+      Semantic query embedding $\psi(q)$ only &
+      16 & No & \texttt{emb\_only} \\
+    Heuristic baseline &
+      Lexical heuristics plus $\psi(q)$; no planner decomposition &
+      50 & No & \texttt{heur\_emb} \\
+    Complexity-only &
+      Planner complexity $\mathbf{z}(q)$ only (ablation) &
+      5 & Yes & \texttt{cvec5} \\
+    \textbf{Complexity--semantic} &
+      Planner complexity $\mathbf{z}(q)$ plus $\psi(q)$ (proposed) &
+      21 & Yes & \texttt{cvec5\_emb} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Complexity--semantic (proposed).}
+Planner-derived $\mathbf{z}(q)\in\mathbb{R}^5$ concatenated with PCA-projected
+$\psi(q)\in\mathbb{R}^{16}$.
+QCE aggregates procedure-graph statistics into five complexity dimensions; TrainNorm caps
+are fit on training plans only (Appendix~\ref{app:hyperparameters}).
+
+\paragraph{Heuristic baseline.}
+Lexical heuristic features plus $\psi(q)$; no LLM decomposition.
+
+\paragraph{Embedding-only.}
+$\psi(q)$ only.
+
+\subsection{QCE Dimension Ablation (Leave-One-Out)}
+\label{app:qce-dim-loo}
+
+Table~\ref{tab:qce-dim-loo} reports leave-one-out ablations on the routing benchmark test split
+($n{=}100$): four complexity dimensions plus $\psi(q)$, with one dimension withheld.
+All rows use cost-soft HGBM; total regret includes QCE planner cost.
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{QCE leave-one-out ablation (four dims + $\psi$, held-out test).}
+  \label{tab:qce-dim-loo}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Withheld dimension & Total regret $\downarrow$ & Agent regret $\downarrow$ \\
+    \midrule
+    \textbf{Full (none withheld)} & \textbf{0.198} & \textbf{0.192} \\
+    Reasoning ($z_2$) & 0.199 & 0.193 \\
+    Evidence ($z_3$) & 0.206 & 0.200 \\
+    Coordination ($z_5$) & 0.207 & 0.201 \\
+    Tool ($z_4$) & 0.218 & 0.212 \\
+    Structural ($z_1$) & 0.228 & 0.222 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Reproduce with \texttt{python -m research.cvec\_dim\_ablation --split test};
+outputs under \texttt{results/experiments/cvec5\_dim\_ablation/}.
+
+% Prompt panels + GAIA figure: single-column / full-width (not right-column half width).
+\input{QCE_Router_Paper_appendix_prompts_fullwidth.tex}
+\input{QCE_Router_Paper_appendix_prompts.tex}
+\input{QCE_Router_Paper_appendix_agent_prompts.tex}
+\clearpage
+\input{QCE_Router_Paper_appendix_gaia_example.tex}
+
+\section{Hyperparameters and Reproducibility}
+\label{app:hyperparameters}
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Implementation details and hyperparameters (primary system).}
+  \label{tab:hyperparams}
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    Component & Setting \\
+    \midrule
+    \multicolumn{2}{@{}l}{\textit{Routing benchmark splits}} \\
+    Train / validation / test queries & 808 / 100 / 100 \\
+    \midrule
+    \multicolumn{2}{@{}l}{\textit{QCE decomposition (Appendix~\ref{app:decompose-prompts})}} \\
+    Procedure planner model & \texttt{gpt-4o-mini} \\
+    Planner output & JSON subtask DAG $\rightarrow$ $G_q$ \\
+    \midrule
+    \multicolumn{2}{@{}l}{\textit{Representation (complexity--semantic)}} \\
+    Planner complexity dimensions & 5 \\
+    Semantic embedding (PCA) & 16 \\
+    Total feature dimension & 21 \\
+    \midrule
+    \multicolumn{2}{@{}l}{\textit{Classifier and supervision}} \\
+    Classifier & Gradient-boosted trees (HGBM) \\
+    Training target & Cost-soft $p^\star$ (KL loss) \\
+    Cost-soft temperature $\tau$ & 100 \\
+    Utility-softmax $\tau$ (ablation; val-selected) & 0.05 \\
+    \midrule
+    \multicolumn{2}{@{}l}{\textit{Evaluation}} \\
+    Utility weight $\lambda$ & 25 \\
+    Selective gating threshold (transfer) & 0.5 \\
+  \end{tabular}
+\end{table}
+
+\paragraph{Reproducibility.}
+All benchmark splits, oracle outcomes, and feature representations are versioned and
+released with the accompanying codebase.
+Supplementary figures and per-dataset routing statistics are included in the supplementary
+material.
+
+\section{Additional Analyses}
+\label{app:additional-analyses}
+
+\paragraph{Routing policy analysis.}
+Per-dataset strategy-selection distributions on executed benchmark workloads are provided
+in the supplementary material.
+
+\paragraph{Calibration.}
+Figure~\ref{fig:calibration} shows reliability diagrams on the held-out test split of the
+routing benchmark (generate with
+\texttt{python -m research.analysis --split test} $\rightarrow$
+\texttt{results/reports/router/test/reliability\_calibration.png}).
+
+\begin{figure}[h]
+  \centering
+  \IfFileExists{results/reports/router/test/reliability_calibration.png}{%
+    \includegraphics[width=0.75\linewidth]{results/reports/router/test/reliability_calibration.png}%
+  }{%
+    \IfFileExists{results/reports/router/val/reliability_calibration.png}{%
+      \includegraphics[width=0.75\linewidth]{results/reports/router/val/reliability_calibration.png}%
+    }{%
+      \IfFileExists{results/reports/analysis/reliability_calibration.png}{%
+        \includegraphics[width=0.75\linewidth]{results/reports/analysis/reliability_calibration.png}%
+      }{%
+        \fbox{\parbox[c][1in][c]{0.85\linewidth}{\centering\small
+          Run \texttt{python -m research.analysis --split test}; expected at
+          \texttt{results/reports/router/test/reliability\_calibration.png}.}}%
+      }%
+    }%
+  }
+  \caption{Router probability calibration (routing benchmark test split).}
+  \label{fig:calibration}
+\end{figure}
+
+\paragraph{Cost--accuracy tradeoff.}
+Figure~\ref{fig:cost-accuracy} compares cost--accuracy frontiers for routed and fixed
+policies on the routing benchmark test split (same analysis run as above, or
+\texttt{python -m research.figures} for
+\texttt{results/reports/figures/fig3\_cost\_accuracy\_frontier.png}).
+
+\begin{figure}[h]
+  \centering
+  \IfFileExists{results/reports/router/test/cost_vs_accuracy.png}{%
+    \includegraphics[width=0.75\linewidth]{results/reports/router/test/cost_vs_accuracy.png}%
+  }{%
+    \IfFileExists{results/reports/analysis/cost_vs_accuracy.png}{%
+      \includegraphics[width=0.75\linewidth]{results/reports/analysis/cost_vs_accuracy.png}%
+    }{%
+      \IfFileExists{results/reports/figures/fig3_cost_accuracy_frontier.png}{%
+        \includegraphics[width=0.75\linewidth]{results/reports/figures/fig3_cost_accuracy_frontier.png}%
+      }{%
+        \fbox{\parbox[c][1in][c]{0.85\linewidth}{\centering\small
+          Run \texttt{python -m research.analysis --split test}; expected at
+          \texttt{results/reports/router/test/cost\_vs\_accuracy.png}.}}%
+      }%
+    }%
+  }
+  \caption{Cost--accuracy tradeoff comparing routed and fixed-strategy policies.}
+  \label{fig:cost-accuracy}
+\end{figure}
+
+\paragraph{Embedding dimension sensitivity.}
+We ablate PCA projection size ($8$, $16$, $32$, $64$ dimensions).
+Dimension $16$ is used in all primary experiments; larger projections do not improve
+held-out regret on the routing benchmark.
+
+\section{Fixed-Strategy Baselines (Per-Agent EM)}
+\label{app:fixed-agent-em}
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Fixed-strategy exact match (\%) by workload.}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Workload & raw & cot & react & multiagent \\
+    \midrule
+    GAIA & 4.2 & 6.1 & 26.1 & 13.3 \\
+    HotpotQA & 39.5 & 36.5 & 69.0 & 32.0 \\
+    MuSiQue & 2.5 & 2.5 & 36.5 & 25.5 \\
+    MMLU & 48.5 & 53.0 & 59.0 & 46.5 \\
+    MATH & 31.0 & 69.5 & 63.0 & 56.0 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Selective QCE}
+\label{app:selective}
+
+An optional selective gate routes queries with high embedding-only confidence without
+invoking planner decomposition.
+Validation-split regret and executed MMLU-Pro results for this variant are reported in the
+supplementary material.
+
+\section{Related Work (Extended)}
+\label{app:related-extended}
+
+Section~\ref{sec:related-work} discusses RouteLLM, LLM-Blender, and GraphRouter as the
+primary literature baselines for this work.
+Table~\ref{tab:related-mapping} summarizes how each system maps to components of our
+experimental design.
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Mapping from literature routing baselines to AAR experiments.}
+  \label{tab:related-mapping}
+  \begin{tabular}{@{}p{0.22\linewidth}p{0.34\linewidth}p{0.36\linewidth}@{}}
+    \toprule
+    Baseline & Core idea & AAR instantiation \\
+    \midrule
+    RouteLLM &
+      Cost-aware strong/weak model routing &
+      Utility $U_a=r_a-\lambda c_a$ and regret (§\ref{sec:experiments-setup}) \\
+    LLM-Blender &
+      Rank/fuse multiple viable model outputs &
+      Cost-soft $p^\star$ over correct strategies (Table~\ref{tab:soft-target}) \\
+    GraphRouter &
+      Graph-structured query--candidate routing &
+      Procedure-DAG complexity $\mathbf{z}(q)$ + embeddings (Table~\ref{tab:feature-regret}) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+RouteLLM~\citep{ong2025routellm}, RouterDC~\citep{chen2024routerdc}, and HybridLLM~\citep{ding2024hybridllm} learn query-conditioned \emph{model} selection under
+cost constraints; LLM-Blender~\citep{jiang2023llmblender} operates post-hoc on multiple generations; GraphRouter~\citep{feng2025graphrouter} and
+AgentRouter~\citep{zhang2025agentrouter} use entity- or affiliation-centric graphs with GNN routing.
+We route among four heterogeneous \emph{agent pipelines} with tabular policies, procedure
+graphs, and cost-soft labels restricted to correct strategies.
+Direct head-to-head replication of published systems is limited by task mismatch (model/API
+routing vs.\ tool-using agent strategies); our tables compare learned and heuristic routers
+in the unified four-strategy setting above.
+
+\section{Discussion and Analysis}
+\label{app:discussion}
+
+\paragraph{Main result.}
+On the routing benchmark, among the evaluated factors cost-soft supervision yields the largest
+observed regret reduction: agent regret falls from $0.361$ to $0.192$ relative to hard labels,
+and executed exact match rises from 63\% to 82\% (Table~\ref{tab:hard-vs-soft}).
+Under cost-soft supervision, the complexity--semantic representation yields the lowest total
+regret ($0.198$) and outperforms both embedding-only and heuristic feature sets
+(Table~\ref{tab:feature-regret}).
+The best configuration combines both components; preserving multiple cost-weighted correct
+strategies during training and enriching $\phi(q)$ with planner-derived structure together
+improve cost-aware routing under the objective the router is trained to optimize.
+
+\paragraph{Secondary result.}
+Benchmark transfer is a secondary evaluation with mixed outcomes: the metric shifts to
+executed exact match on heterogeneous public workloads without per-query oracle access
+at inference.
+The proposed router remains competitive (48.1\% pooled EM) but does not consistently
+outperform a simpler heuristic router (50.3\%) or the strongest fixed strategy per family
+(Table~\ref{tab:benchmark-transfer-em}); this should not be read as invalidating
+routing-benchmark regret gains.
+Held-out families (GAIA, MMLU-Pro) and distribution shift likely contribute; the framework
+is most reliable where training and evaluation share oracle multi-strategy supervision.
+Transfer nevertheless shows that the router does not collapse to a single static policy and
+remains usable under full execution.
+
+\paragraph{Oracle reference.}
+\textbf{Best agent} performance in Table~\ref{tab:live-benchmark} should be read as an
+oracle headroom reference, not as evidence that learned routing is near-optimal on every
+workload.
+Large gaps between proposed and best-agent exact match (e.g., on GAIA and HotpotQA) indicate
+substantial room for improved routing or richer strategy pools, while the routing-benchmark
+regret metric captures progress toward the cost-aware objective used during training.
+
+Supplementary analyses---routing policy distributions across workloads, cost--accuracy
+tradeoffs on oracle splits, and classifier calibration---are reported in
+Appendix~\ref{app:additional-analyses}.

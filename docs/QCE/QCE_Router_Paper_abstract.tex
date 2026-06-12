@@ -1,0 +1,34 @@
+% Abstract — problem → gap → method → results (research-story order)
+\begin{abstract}
+Deploying large language model (LLM) agents requires selecting among heterogeneous agent
+strategies, including direct prompting, chain-of-thought reasoning, tool-augmented ReAct, and
+multi-agent coordination.
+Because no single strategy is optimal across queries, effective deployment depends on routing
+queries to appropriate strategies before execution.
+Existing routing approaches primarily rely on semantic query representations and hard
+winner-take-all supervision, which may overlook procedural requirements and discard information
+when multiple strategies succeed at different costs.
+
+We propose \textbf{Adaptive Agent Routing (AAR)}, a pre-inference routing framework that combines
+planner-derived procedural complexity with semantic query representations.
+AAR first estimates query complexity from an LLM-generated procedure directed acyclic graph
+(DAG), summarized into a five-dimensional complexity vector.
+This signal is fused with semantic embeddings to form a complexity--semantic routing
+representation.
+To learn routing policies, AAR employs \textbf{cost-soft supervision}, which distributes
+training mass across successful strategies according to execution cost rather than enforcing a
+single hard target.
+
+Experiments on a held-out routing benchmark ($n{=}100$ test; $\lambda{=}25$) show that
+\textbf{cost-soft supervision} substantially reduces utility regret (agent regret
+$0.361\to 0.192$; executed exact match 63\%$\to$82\%).
+The lowest total regret ($0.198$) is achieved when cost-soft training is combined with the
+complexity--semantic representation, outperforming embedding-only, complexity-only, and
+heuristic-plus-embedding baselines.
+Representation ablations indicate that procedural complexity alone is insufficient for routing
+but provides complementary information when combined with semantic features.
+Under transfer on executed benchmark workloads ($N{=}965$), AAR attains competitive performance
+(48.1\% pooled exact match vs.\ 50.3\% for a heuristic baseline); gains are less consistent
+than on the routing benchmark, where oracle multi-strategy supervision aligns with the routing
+objective.
+\end{abstract}

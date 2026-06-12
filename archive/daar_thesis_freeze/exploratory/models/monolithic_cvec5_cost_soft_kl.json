@@ -1,0 +1,14 @@
+{
+  "experiment_id": "monolithic_cvec5_cost_soft_kl",
+  "n_features": 5,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "feature_set": "cvec5",
+  "soft_target": "cost_soft",
+  "pool": "daar_train"
+}

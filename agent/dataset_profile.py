@@ -4,14 +4,12 @@ import json
 import re
 from typing import Any, Mapping
 
-RUNTIME_HOP_KEYS: frozenset[str] = frozenset({"n_hops", "hop_name"})
+from config.local.constants import DS, HOP_KEYS, TOOLS
 
-# Multi-hop open QA datasets (profiles + planner repair + observation fallback).
-OPEN_WIKI_QA_DATASETS: frozenset[str] = frozenset({"hotpot", "musique"})
-
-# Hotpot / MuSiQue linear-hop repair only (not GAIA — GAIA uses files, code, mixed tools).
-_WEB_LOOKUP_TOOLS = frozenset({"wikipedia_search", "wikipedia", "web_search", "web_fetch"})
-_RETRIEVE_CHAIN_TOOLS = frozenset({"retrieve"}) | _WEB_LOOKUP_TOOLS
+RUNTIME_HOP_KEYS = HOP_KEYS
+OPEN_WIKI_QA_DATASETS = DS.wiki_qa
+_WEB_LOOKUP_TOOLS = TOOLS.web_lookup
+_RETRIEVE_CHAIN_TOOLS = TOOLS.retrieve_chain
 
 
 def is_open_wiki_qa(dataset: str) -> bool:
@@ -134,7 +132,7 @@ _MULTIAGENT_FACT_CHARS: dict[str, int] = {
     "hotpot": 160,
     "musique": 180,
     "gaia": 220,
-    "mmlu_pro": 80,
+    "mmlu": 80,
 }
 
 
@@ -160,7 +158,7 @@ def apply_multiagent_profile(
     elif ds == "gaia":
         out.setdefault("max_subtasks", 6)
         out.setdefault("tool_max_steps", 14)
-    elif ds == "mmlu_pro":
+    elif ds == "mmlu":
         out.setdefault("max_subtasks", 1)
     elif ds == "musique":
         hops = n_hops or 4

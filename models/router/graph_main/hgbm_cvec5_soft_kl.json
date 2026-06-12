@@ -1,0 +1,30 @@
+{
+  "experiment_id": "hgbm_cvec5_soft_kl",
+  "n_features": 5,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "classifier": "hgbm",
+  "feature_set": "cvec5",
+  "target": "soft_p",
+  "soft_target": "cost_soft",
+  "utility_lambda": null,
+  "softmax_temperature": null,
+  "loss": "kl_soft_ce",
+  "n_train_queries": 808,
+  "n_train_expanded_rows": 3232,
+  "val_macro_f1_hard_label": 0.29929322218195,
+  "val_accuracy_hard_label": 0.45,
+  "hgbm_params": "default",
+  "comparison": {
+    "soft_kl_test_regret": 0.26702
+  },
+  "router_role": "primary",
+  "production": false,
+  "primary_router": "hgbm_cvec5_emb_soft_kl",
+  "secondary_router": "logreg_cvec5_emb_soft_kl"
+}

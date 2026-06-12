@@ -1,4 +1,16 @@
-"""Query Complexity Estimation — decomposition and graph features."""
+"""
+Query Complexity Estimation — Phase 1 feature pipeline.
+
+Stages::
+
+    decompose  → LLM procedure plans (JSONL cache)
+    graph      → procedure DAG + graph metrics
+    complexity → C(Q) vector (dim_*)
+    features   → merge complexity + embeddings for routing
+    io         → query row normalization, corpus load
+"""
+
+from config.local.constants import DIMS, DS, GRAPH, PLAN, SCORE, STATUS, TOOLS
 
 from qce.decompose import (
     DEFAULT_CACHE_PATH,
@@ -33,35 +45,44 @@ from qce.complexity import (
     router_scalar_col,
     router_scalar_vector,
 )
-from qce.graph import complexity_graph_score
 from qce.graph import (
-    C_VECTOR_VER_V2,
-    DIM5_LEGACY_COLS,
-    DIM7_COLS,
-    DIM_COLS,
+    END,
+    START,
     GraphBuildResult,
     TrainNorm,
     build_graphs_from_plans,
     build_task_dag,
+    complexity_graph_score,
     features_dataframe,
     fit_train_norm,
     rescore_dataframe,
 )
 
+# Dimension column tuples (canonical in config.local.constants).
+DIM_COLS = DIMS.main
+DIM5_COLS = DIMS.legacy
+
 __all__ = [
     "C_VECTOR_COLS",
     "C_VECTOR_VER",
-    "C_VECTOR_VER_V2",
-    "DIM7_COLS",
-    "DIM5_LEGACY_COLS",
+    "DIMS",
+    "DIM5_COLS",
     "DIM_COLS",
+    "DS",
+    "GRAPH",
+    "PLAN",
     "ROUTER_MAIN_FEATURE_SET",
     "SCALAR_COL",
+    "SCORE",
+    "STATUS",
+    "TOOLS",
     "DEFAULT_CACHE_PATH",
     "DEFAULT_DECOMPOSE_MODEL",
+    "END",
     "GraphBuildResult",
     "PLAN_OK",
     "PLAN_PARSE_FAIL",
+    "START",
     "TrainNorm",
     "build_graphs_from_plans",
     "build_task_dag",

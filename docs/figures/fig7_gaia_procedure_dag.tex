@@ -1,0 +1,106 @@
+% GAIA worked example — top-to-bottom procedure DAG (eval f46b4380)
+\begin{figure*}[t]
+  \centering
+  \resizebox{0.98\textwidth}{!}{%
+  \begin{tikzpicture}[
+    font=\small\sffamily,
+    >=Stealth,
+    panel/.style={
+      draw=gray!45, rounded corners=4pt, fill=gray!4,
+      inner sep=6pt, align=left, font=\scriptsize\sffamily,
+    },
+    st/.style={
+      draw=#1!65!black, fill=#1!12, rounded corners=6pt,
+      minimum width=2.0cm, minimum height=1.15cm, align=center,
+      line width=0.95pt, inner sep=5pt,
+    },
+    virtnode/.style={
+      draw=gray!50, fill=white, line width=0.75pt,
+      rounded corners=4pt, font=\scriptsize\sffamily\ttfamily,
+      inner xsep=6pt, inner ysep=3pt,
+    },
+    dep/.style={->, line width=1.1pt, draw=blue!65!black},
+    depside/.style={->, line width=0.85pt, draw=blue!35},
+    virtedge/.style={->, line width=0.8pt, draw=gray!55, dashed},
+  ]
+    % ===== Top metadata =====
+    \node[panel, text width=3.85cm] (ctx) at (-4.85, 9.2) {%
+      \textbf{Context}\\[2pt]
+      1999 bet: Fiona Apple \& Paula Cole albums---which lacked a Christgau \emph{letter} grade? Comma-separated titles (A--Z).
+    };
+    \node[panel, text width=2.4cm, align=center] (qinfo) at (0, 9.2) {%
+      \textbf{Query} $\mathbf{Q}$\\
+      GAIA L2 \texttt{f46b4380\ldots}
+    };
+    \node[panel, text width=3.9cm] (edgebox) at (4.85, 9.2) {%
+      \textbf{\texttt{depends\_on}}\\
+      \texttt{t1[]}, \texttt{t2[]}; \texttt{t3[t1,t2]}; \texttt{t4[t1,t2,t3]}
+    };
+
+    % ===== DAG background (white, behind nodes) =====
+    \fill[white, rounded corners=10pt] (-4.05, 0.65) rectangle (4.05, 8.35);
+    \draw[gray!45, rounded corners=10pt, line width=0.75pt]
+      (-4.05, 0.65) rectangle (4.05, 8.35);
+
+    % ===== DAG nodes: start (top) -> end (bottom) =====
+    \node[virtnode] (start) at (0, 8.15) {start};
+
+    \node[st=blue] (t1) at (-2.75, 6.65) {%
+      \textbf{t1}\\[2pt]
+      {\scriptsize retrieve}\\
+      {\scriptsize\texttt{web\_search}}};
+    \node[st=blue] (t2) at (2.75, 6.65) {%
+      \textbf{t2}\\[2pt]
+      {\scriptsize retrieve}\\
+      {\scriptsize\texttt{web\_search}}};
+
+    \node[st=blue] (t3) at (0, 4.75) {%
+      \textbf{t3}\\[2pt]
+      {\scriptsize retrieve}\\
+      {\scriptsize\texttt{web\_search}}};
+
+    \node[st=violet] (t4) at (0, 2.65) {%
+      \textbf{t4}\\[2pt]
+      {\scriptsize compute}\\
+      {\scriptsize sink}};
+
+    \node[virtnode] (end) at (0, 1.15) {end};
+
+    % ===== DAG edges (downward flow) =====
+    \draw[virtedge] (start.south west) -- (t1.north);
+    \draw[virtedge] (start.south east) -- (t2.north);
+    \draw[dep] (t1.south) -- (t3.north west);
+    \draw[dep] (t2.south) -- (t3.north east);
+    \draw[dep] (t3.south) -- (t4.north);
+    \draw[virtedge] (t4.south) -- (end.north);
+    \draw[depside] (t1.south east) to[out=-58, in=168, looseness=0.85] (t4.north west);
+    \draw[depside] (t2.south west) to[out=-122, in=12, looseness=0.85] (t4.north east);
+
+    % ===== Bottom metadata =====
+    \node[panel, text width=3.5cm] (leg) at (-3.15, -0.35) {%
+      \textbf{Legend}\\
+      \tikz{\draw[dep] (0,0) -- (0.55,0);} spine \quad
+      \tikz{\draw[depside] (0,0) -- (0.55,0);} direct\\
+      \tikz{\draw[virtedge] (0,0) -- (0.55,0);} virtual
+    };
+    \node[panel, text width=5.2cm, align=left] (zq) at (2.75, -0.35) {%
+      \textbf{$\mathbf{z}(q)$} (train norm)\\[3pt]
+      \begin{tabular}{@{}l@{\hspace{0.3em}}c@{\hspace{0.2em}}r@{}}
+        Structural    & \textcolor{blue!55!black}{\rule{1.5cm}{0.12cm}} & 0.883 \\
+        Reasoning     & \textcolor{blue!55!black}{\rule{0.92cm}{0.12cm}} & 0.508 \\
+        Evidence      & \textcolor{blue!55!black}{\rule{1.22cm}{0.12cm}} & 0.719 \\
+        Tool          & \textcolor{blue!55!black}{\rule{0.88cm}{0.12cm}} & 0.486 \\
+        Coordination  & \textcolor{blue!55!black}{\rule{0.20cm}{0.12cm}} & 0.143 \\
+      \end{tabular}
+    };
+
+  \end{tikzpicture}%
+  }
+
+  \caption{Worked GAIA example (eval \texttt{f46b4380-207e-4434-820b-f32ce04ae2a4}): procedure
+    DAG $G_q$ (top \texttt{start} $\rightarrow$ bottom \texttt{end}) with parallel retrieves
+    \texttt{t1}, \texttt{t2}, merge at \texttt{t3}, and fan-in sink \texttt{t4}
+    (Table~\ref{tab:gaia-subtasks}). Curved edges are direct \texttt{depends\_on} links to the sink.
+    Normalized $\mathbf{z}(q)$ in Table~\ref{tab:gaia-cq}.}
+  \label{fig:gaia-dag-example}
+\end{figure*}

@@ -1,0 +1,32 @@
+{
+  "experiment_id": "solvability_p1_soft_kl",
+  "n_features": 21,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty",
+    "emb_0",
+    "emb_1",
+    "emb_2",
+    "emb_3",
+    "emb_4",
+    "emb_5",
+    "emb_6",
+    "emb_7",
+    "emb_8",
+    "emb_9",
+    "emb_10",
+    "emb_11",
+    "emb_12",
+    "emb_13",
+    "emb_14",
+    "emb_15"
+  ],
+  "feature_set": "cvec5_emb",
+  "gate1_variant": "p1",
+  "gate1_supervision": "utility_softmax",
+  "utility_lambda": 25.0,
+  "softmax_temperature": 1.0
+}

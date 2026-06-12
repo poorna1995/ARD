@@ -1,0 +1,138 @@
+{
+  "feature_set": "cvec5_emb",
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty",
+    "emb_0",
+    "emb_1",
+    "emb_2",
+    "emb_3",
+    "emb_4",
+    "emb_5",
+    "emb_6",
+    "emb_7",
+    "emb_8",
+    "emb_9",
+    "emb_10",
+    "emb_11",
+    "emb_12",
+    "emb_13",
+    "emb_14",
+    "emb_15"
+  ],
+  "agents": [
+    "react",
+    "cot",
+    "raw",
+    "multiagent"
+  ],
+  "theta_s": 0.35,
+  "train_agent_metrics": [
+    {
+      "agent": "react",
+      "n": 1050,
+      "accuracy": 0.940952380952381,
+      "roc_auc": 0.9917251764705882,
+      "avg_precision": 0.9949915481974138
+    },
+    {
+      "agent": "cot",
+      "n": 1050,
+      "accuracy": 0.8990476190476191,
+      "roc_auc": 0.979573367808662,
+      "avg_precision": 0.9746074128233114
+    },
+    {
+      "agent": "raw",
+      "n": 1050,
+      "accuracy": 0.9514285714285714,
+      "roc_auc": 0.9978073401242966,
+      "avg_precision": 0.9947554300022561
+    },
+    {
+      "agent": "multiagent",
+      "n": 1050,
+      "accuracy": 0.6504761904761904,
+      "roc_auc": 0.8707812422789939,
+      "avg_precision": 0.8251989678989453
+    }
+  ],
+  "val_agent_metrics": [
+    {
+      "agent": "react",
+      "n": 225,
+      "accuracy": 0.5866666666666667,
+      "roc_auc": 0.6311838153943418,
+      "avg_precision": 0.6087875828521492
+    },
+    {
+      "agent": "cot",
+      "n": 225,
+      "accuracy": 0.6266666666666667,
+      "roc_auc": 0.6182978036175711,
+      "avg_precision": 0.5926361580743718
+    },
+    {
+      "agent": "raw",
+      "n": 225,
+      "accuracy": 0.6755555555555556,
+      "roc_auc": 0.4852562833960023,
+      "avg_precision": 0.29721051575215174
+    },
+    {
+      "agent": "multiagent",
+      "n": 225,
+      "accuracy": 0.6266666666666667,
+      "roc_auc": 0.5963865546218488,
+      "avg_precision": 0.5141219186579455
+    }
+  ],
+  "val_abstention": {
+    "theta_s": 0.35,
+    "abstention_rate": 0.1777777777777778,
+    "precision": 0.6594594594594595,
+    "recall": 0.8970588235294118,
+    "f1": 0.7601246105919003
+  },
+  "test_agent_metrics": [
+    {
+      "agent": "react",
+      "n": 225,
+      "accuracy": 0.6444444444444445,
+      "roc_auc": 0.6763216207660653,
+      "avg_precision": 0.6813068863875293
+    },
+    {
+      "agent": "cot",
+      "n": 225,
+      "accuracy": 0.7066666666666667,
+      "roc_auc": 0.7619753086419754,
+      "avg_precision": 0.6811498948672383
+    },
+    {
+      "agent": "raw",
+      "n": 225,
+      "accuracy": 0.7111111111111111,
+      "roc_auc": 0.5963829326402427,
+      "avg_precision": 0.3170377855592534
+    },
+    {
+      "agent": "multiagent",
+      "n": 225,
+      "accuracy": 0.6533333333333333,
+      "roc_auc": 0.5505843362986221,
+      "avg_precision": 0.41976589100692563
+    }
+  ],
+  "test_abstention": {
+    "theta_s": 0.35,
+    "abstention_rate": 0.16000000000000003,
+    "precision": 0.6878306878306878,
+    "recall": 0.9219858156028369,
+    "f1": 0.7878787878787878
+  },
+  "models_dir": "/Users/poorna/Desktop/research_work/models/daar"
+}

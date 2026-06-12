@@ -1,8 +1,5 @@
-"""Dataset loaders — see ``registry.py`` for the canonical registry."""
+"""Backward-compat shim → ``input.loaders``."""
 
-from .registry import REGISTRY, get_loader
-
-# Back-compat alias used by older scripts
-LOADER_REGISTRY = REGISTRY
+from input.loaders import LOADER_REGISTRY, REGISTRY, get_loader
 
 __all__ = ["REGISTRY", "LOADER_REGISTRY", "get_loader"]

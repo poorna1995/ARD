@@ -1,0 +1,12 @@
+% Appendix: QCE planner (decomposition) prompts — verbatim from codebase
+\section{QCE Decomposition Prompts}
+\label{app:decompose-prompts}
+
+The Query Complexity Estimator (QCE) calls an LLM \emph{procedure planner} before routing.
+The planner outputs a JSON object describing an acyclic subtask DAG (Algorithm~\ref{alg:qce}).
+Figure~\ref{fig:decompose-prompt-suite} reproduces the released prompts from
+\texttt{input/prompts/qce\_decompose.py} without abridgment (default model: \texttt{gpt-4o-mini}).
+Agent \emph{execution} prompts are in Appendix~\ref{app:agent-prompts}.
+
+\input{figures/fig_decompose_prompt_suite.tex}
+\clearpage

@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from agent.base import BaseAgent, AgentResponse
-from prompts.prompts_core import (
+from config.local.constants import TOOLS as AGENT_TOOLS
+from input.prompts.prompts_core import (
     REACT_BAD_FINAL_ANSWERS,
     react_format_retry_observation,
     react_loop_observation,
@@ -237,7 +238,7 @@ _TOKEN_STOP = frozenset({
     "is", "was", "were", "be", "by", "with", "from", "that", "this",
 })
 _SIMILAR_QUERY_JACCARD = 0.85
-_EXACT_REPEAT_TOOLS = frozenset({"python_exec", "web_fetch", "read_file", "pdb_parse"})
+_EXACT_REPEAT_TOOLS = AGENT_TOOLS.react_repeat
 _MATH_TOOL_NUDGE_AFTER = 3
 _STAGNATION_NOTICE_AT = 2  # same tool + query + observation (2nd identical triplet)
 
@@ -892,7 +893,7 @@ def build_react_agent(
     from agent.config import normalize_agent_config
     from agent.dataset_policy import DatasetPolicy, default_dataset_policy
     from agent.dataset_profile import apply_react_profile, extract_hop_metadata
-    from prompts.prompts import build_react_system, user_prompt
+    from input.prompts.prompts import build_react_system, user_prompt
 
     cfg = normalize_agent_config(
         model=model,

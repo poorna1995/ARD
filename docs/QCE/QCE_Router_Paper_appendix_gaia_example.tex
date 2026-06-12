@@ -1,0 +1,75 @@
+% Worked GAIA example: planner JSON -> procedure DAG -> C(Q)
+\subsection{Worked Example: GAIA Query to Procedure DAG and Complexity Vector}
+\label{app:gaia-worked-example}
+
+We walk through a real held-out GAIA transfer query (eval sample
+\texttt{f46b4380-207e-4434-820b-f32ce04ae2a4}, Level~2) from decomposition through graph repair to
+the five-dimensional complexity vector $\mathbf{z}(q)$ consumed by the router.
+
+\paragraph{Query.}
+\begin{quote}\small
+It is 1999. Before you party like it is 1999, please assist me in settling a bet.
+Fiona Apple and Paula Cole released albums prior to 1999. Of these albums, which didn't receive
+a letter grade from Robert Christgau? Provide your answer as a comma delimited list of album titles,
+sorted alphabetically.
+\end{quote}
+
+\paragraph{Planner output (JSON).}
+The procedure planner returns \texttt{final\_constraint=phrase} and four subtasks with
+multiple \texttt{depends\_on} edges (no graph repairs on this instance):
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Planner subtasks for the GAIA album-grade query (abridged).}
+  \label{tab:gaia-subtasks}
+  \begin{tabular}{@{}lllll@{}}
+    \toprule
+    id & step\_type & tool & depends\_on & goal (abridged) \\
+    \midrule
+    t1 & retrieve & web\_search & [] & Fiona Apple albums before 1999 \\
+    t2 & retrieve & web\_search & [] & Paula Cole albums before 1999 \\
+    t3 & retrieve & web\_search & [t1, t2] & Christgau letter grades for albums \\
+    t4 & compute & none & [t1, t2, t3] & Albums without letter grade (sink) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Graph statistics and $\mathbf{z}(q)$.}
+QCE computes topology and plan-semantics statistics on $G_q$ (e.g., \texttt{max\_depth}$=3$,
+\texttt{n\_nodes}$=4$, multiple merge edges, \texttt{n\_merge\_nodes}${=}2$),
+normalizes each statistic with train-fitted caps (\texttt{models/qce\_graph/train\_norm.json}),
+and aggregates normalized terms into five groups
+(Table~\ref{tab:complexity-dims}; implementation in \texttt{qce/graph.py}).
+
+\begin{table}[h]
+  \centering
+  \footnotesize
+  \caption{Complexity vector for the GAIA album-grade example (train norm applied).}
+  \label{tab:gaia-cq}
+  \begin{tabular}{@{}lrl@{}}
+    \toprule
+    Dimension & Value & Main signals (this query) \\
+    \midrule
+    $z_1$ structural & 0.883 & 4-node DAG, parallel roots, multi-parent sink \\
+    $z_2$ reasoning & 0.508 & compute sink after merged retrieval \\
+    $z_3$ evidence & 0.719 & three web retrieval hops \\
+    $z_4$ tool & 0.486 & repeated \texttt{web\_search}, no attachment \\
+    $z_5$ coordination & 0.143 & clean plan; non-trivial merge structure \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Procedure DAG.}
+QCE links virtual \texttt{\_\_start\_\_} to both root retrieves, connects each
+\texttt{depends\_on} prerequisite, and attaches \texttt{\_\_end\_\_} after the sink
+(Figure~\ref{fig:gaia-dag-example}).
+The graph is not a simple chain: \texttt{t3} merges \texttt{t1} and \texttt{t2}, and
+\texttt{t4} depends on all three predecessors.
+
+\input{figures/fig7_gaia_procedure_dag.tex}
+
+The router then concatenates $\mathbf{z}(q)$ with $\psi(q)$ (PCA-16 embedding of the query
+text) to form $\phi(q)$ for cost-soft HGBM routing.
+This example illustrates how multi-hop GAIA queries with parallel evidence gathering and
+merge nodes yield higher structural and evidence complexity than single-file linear plans.

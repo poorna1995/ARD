@@ -4,7 +4,7 @@ import time
 
 from agent.base import BaseAgent, AgentResponse
 from evaluator.parse import parse_llm_output
-from prompts.prompts import build_raw_system, user_prompt
+from input.prompts.prompts import build_raw_system, user_prompt
 
 AGENT_ID = "raw_001"
 

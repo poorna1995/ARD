@@ -1,0 +1,28 @@
+{
+  "model": "cost_residual",
+  "target": "delta_route_cost = route_cost_oracle - route_cost_hat",
+  "per_agent": {
+    "react": {
+      "n": 1050,
+      "train_mae": 3910.5058042669893,
+      "train_rmse": 6107.297118752812
+    },
+    "cot": {
+      "n": 1050,
+      "train_mae": 3.9349259976713715,
+      "train_rmse": 10.252828505762725
+    },
+    "raw": {
+      "n": 1050,
+      "train_mae": 0.0,
+      "train_rmse": 0.0
+    },
+    "multiagent": {
+      "n": 1050,
+      "train_mae": 8437.526078775643,
+      "train_rmse": 14246.041747173389
+    }
+  },
+  "model_path": "/Users/poorna/Desktop/research_work/models/daar/cost_residual.joblib",
+  "routing": "route_cost_hat_final = route_cost_hat + delta_hat"
+}

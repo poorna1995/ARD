@@ -59,16 +59,7 @@ STRATEGY_PARAM_KEYS: dict[str, frozenset[str]] = {
 }
 
 # Passed through run() but not part of model/agent configuration.
-RUNTIME_KWARGS: frozenset[str] = frozenset({
-    "expected_answer",
-    "phase",
-    "n_hops",
-    "hop_name",
-    "context",
-    "evidence_mode",
-    "allowed_tools",
-    "policy",
-})
+from config.local.constants import RUNTIME_KWARGS
 
 
 CONFIG_ALIASES: dict[str, str] = {

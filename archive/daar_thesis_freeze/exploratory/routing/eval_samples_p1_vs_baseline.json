@@ -1,0 +1,112 @@
+{
+  "outcome_source": "eval_samples + live_eval_baselines (Universe B)",
+  "note": "P1 rank only (argmax \u015d); no Gate 2 cost_hand on eval_samples. Matches frozen P1 val routing with \u03b8_s=0, \u03bb\u22480.",
+  "frozen_p1_daar_val_reference": {
+    "mean_agent_regret": 0.09333333333333334,
+    "success_rate": 0.5111111111111111,
+    "abstention_rate": 0.0,
+    "split": "daar_val",
+    "n": 225
+  },
+  "per_dataset": [
+    {
+      "dataset": "gaia",
+      "n_eval_queries": 165,
+      "baselines_missing": [],
+      "p1_frozen_rank": {
+        "n": 165,
+        "mean_agent_regret": 0.12121212121212122,
+        "success_rate": 0.19393939393939394,
+        "abstention_rate": 0.0
+      },
+      "baseline_hgbm_cvec5_emb_soft_kl": {
+        "n": 165,
+        "mean_agent_regret": 0.12727272727272726,
+        "success_rate": 0.18787878787878787,
+        "abstention_rate": 0.0
+      }
+    },
+    {
+      "dataset": "hotpot",
+      "n_eval_queries": 200,
+      "baselines_missing": [],
+      "p1_frozen_rank": {
+        "n": 200,
+        "mean_agent_regret": 0.145,
+        "success_rate": 0.62,
+        "abstention_rate": 0.0
+      },
+      "baseline_hgbm_cvec5_emb_soft_kl": {
+        "n": 200,
+        "mean_agent_regret": 0.18,
+        "success_rate": 0.585,
+        "abstention_rate": 0.0
+      }
+    },
+    {
+      "dataset": "math",
+      "n_eval_queries": 200,
+      "baselines_missing": [],
+      "p1_frozen_rank": {
+        "n": 200,
+        "mean_agent_regret": 0.125,
+        "success_rate": 0.655,
+        "abstention_rate": 0.0
+      },
+      "baseline_hgbm_cvec5_emb_soft_kl": {
+        "n": 200,
+        "mean_agent_regret": 0.11,
+        "success_rate": 0.67,
+        "abstention_rate": 0.0
+      }
+    },
+    {
+      "dataset": "mmlu",
+      "n_eval_queries": 200,
+      "baselines_missing": [],
+      "p1_frozen_rank": {
+        "n": 200,
+        "mean_agent_regret": 0.16,
+        "success_rate": 0.545,
+        "abstention_rate": 0.0
+      },
+      "baseline_hgbm_cvec5_emb_soft_kl": {
+        "n": 200,
+        "mean_agent_regret": 0.155,
+        "success_rate": 0.55,
+        "abstention_rate": 0.0
+      }
+    },
+    {
+      "dataset": "musique",
+      "n_eval_queries": 200,
+      "baselines_missing": [],
+      "p1_frozen_rank": {
+        "n": 200,
+        "mean_agent_regret": 0.08,
+        "success_rate": 0.38,
+        "abstention_rate": 0.0
+      },
+      "baseline_hgbm_cvec5_emb_soft_kl": {
+        "n": 200,
+        "mean_agent_regret": 0.1,
+        "success_rate": 0.36,
+        "abstention_rate": 0.0
+      }
+    }
+  ],
+  "pooled": {
+    "p1_frozen_rank": {
+      "n": 965,
+      "mean_agent_regret": 0.12642487046632125,
+      "success_rate": 0.48911917098445595,
+      "abstention_rate": 0.0
+    },
+    "baseline_hgbm_cvec5_emb_soft_kl": {
+      "n": 965,
+      "mean_agent_regret": 0.13471502590673576,
+      "success_rate": 0.48082901554404145,
+      "abstention_rate": 0.0
+    }
+  }
+}

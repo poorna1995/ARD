@@ -13,52 +13,13 @@ Dataset runtime policy — two independent axes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Literal
 
-# Where evidence lives for this task (routing / prompt context shaping).
-EvidenceMode = Literal["provided_context", "open_web", "internal"]
-
-_OPEN_WEB_TOOLS = frozenset({"web_search", "web_fetch", "wikipedia_search"})
-_RETRIEVE_TOOLS = frozenset({"retrieve"})
-
-_DEFAULT_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
-    "math": frozenset({"math_tool"}),
-    "hotpot": frozenset({"retrieve"}),
-    "musique": frozenset({"retrieve"}),
-    "gaia": frozenset({
-        "read_file",
-        "web_search",
-        "web_fetch",
-        "wikipedia_search",
-        "python_exec",
-        "arxiv_search",
-        "github_search",
-        "pdb_parse",
-        "math_tool",
-    }),
-    "mmlu_pro": frozenset(),
-}
-
-_DEFAULT_MAX_STEPS: dict[str, int] = {
-    "gaia": 14,
-    "hotpot": 7,
-    "musique": 8,
-    "math": 8,
-    "mmlu_pro": 6,
-}
-
-_DEFAULT_EVIDENCE_MODE: dict[str, EvidenceMode] = {
-    "hotpot": "provided_context",
-    "musique": "provided_context",
-    "gaia": "open_web",
-    "math": "internal",
-    "mmlu_pro": "internal",
-}
+from config.local.constants import EvidenceMode, POLICY, TOOLS
 
 
 def default_allowed_tools(dataset: str) -> frozenset[str]:
     ds = (dataset or "").strip().lower()
-    return _DEFAULT_ALLOWED_TOOLS.get(ds, frozenset())
+    return POLICY.allowed.get(ds, frozenset())
 
 
 def policy_warnings(policy: DatasetPolicy) -> list[str]:
@@ -71,22 +32,22 @@ def policy_warnings(policy: DatasetPolicy) -> list[str]:
     tools = {t.lower() for t in policy.allowed_tools}
     mode = policy.evidence_mode
 
-    if mode == "provided_context" and tools & _OPEN_WEB_TOOLS:
+    if mode == "provided_context" and tools & TOOLS.open_web:
         warnings.append(
             "evidence_mode=provided_context but open-web tools are allowed "
-            f"({sorted(tools & _OPEN_WEB_TOOLS)})."
+            f"({sorted(tools & TOOLS.open_web)})."
         )
     if mode == "provided_context" and policy.dataset in ("hotpot", "musique"):
-        if not (tools & _RETRIEVE_TOOLS):
+        if not (tools & TOOLS.retrieve):
             warnings.append(
                 "evidence_mode=provided_context for open-QA dataset but "
                 "retrieve is not in allowed_tools."
             )
-    if mode == "open_web" and tools & _RETRIEVE_TOOLS:
+    if mode == "open_web" and tools & TOOLS.retrieve:
         warnings.append(
             "evidence_mode=open_web but retrieve is allowed (usually redundant)."
         )
-    if mode == "internal" and tools & (_OPEN_WEB_TOOLS | _RETRIEVE_TOOLS):
+    if mode == "internal" and tools & (TOOLS.open_web | TOOLS.retrieve):
         warnings.append(
             "evidence_mode=internal but evidence-fetching tools are allowed."
         )
@@ -110,6 +71,6 @@ def default_dataset_policy(dataset: str) -> DatasetPolicy:
     return DatasetPolicy(
         dataset=ds,
         allowed_tools=default_allowed_tools(ds),
-        max_steps=_DEFAULT_MAX_STEPS.get(ds),
-        evidence_mode=_DEFAULT_EVIDENCE_MODE.get(ds, "internal"),
+        max_steps=POLICY.max_steps.get(ds),
+        evidence_mode=POLICY.evidence.get(ds, "internal"),
     )

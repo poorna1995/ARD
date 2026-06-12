@@ -1,0 +1,152 @@
+{
+  "gate": 3,
+  "variant": "decomposed",
+  "gate1_supervision": "success_only_soft_kl",
+  "rank_head": "gate1b",
+  "abstention_mode": "p_solv",
+  "abstention_rule": "P(solvable) < theta_s via Gate 1a; Gate 1b never abstains",
+  "theta_s": 0.05,
+  "route_cost_norms": {
+    "route_cost_hat_median_train": 351.66666666666663,
+    "route_cost_oracle_median_train": 254.5,
+    "cost_norm_mode": 1.0,
+    "route_cost_hat_median_train_react": 14115.0,
+    "route_cost_oracle_median_train_react": 7942.0,
+    "route_cost_hat_median_train_cot": 211.0,
+    "route_cost_oracle_median_train_cot": 211.0,
+    "route_cost_hat_median_train_raw": 1.0,
+    "route_cost_oracle_median_train_raw": 1.0,
+    "route_cost_hat_median_train_multiagent": 28765.5,
+    "route_cost_oracle_median_train_multiagent": 12755.0
+  },
+  "cost_norm_mode": "per_agent",
+  "routing_score": "s_hat - lambda * route_cost_hat_norm",
+  "lambda_grid": [
+    0.0,
+    0.001,
+    0.005,
+    0.01,
+    0.05,
+    0.1,
+    0.5,
+    1.0
+  ],
+  "lambda_frozen": 0.0,
+  "lambda_selection": "min mean_agent_regret on val",
+  "primary_metric": "mean_agent_regret",
+  "val_lambda_sweep": [
+    {
+      "lambda": 0.0,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.08888888888888889,
+      "mean_utility_regret": 0.08888888888888889,
+      "success_rate": 0.5155555555555555,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.0023320993333333334
+    },
+    {
+      "lambda": 0.001,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.08888888888888889,
+      "mean_utility_regret": 0.09011810068546051,
+      "success_rate": 0.5155555555555555,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.0023320993333333334
+    },
+    {
+      "lambda": 0.005,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.08888888888888889,
+      "mean_utility_regret": 0.09504661244251805,
+      "success_rate": 0.5155555555555555,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.0023356793333333334
+    },
+    {
+      "lambda": 0.01,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.08888888888888889,
+      "mean_utility_regret": 0.10118814104404943,
+      "success_rate": 0.5155555555555555,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.002332467333333333
+    },
+    {
+      "lambda": 0.05,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.12,
+      "mean_utility_regret": 0.17904402452423634,
+      "success_rate": 0.48444444444444446,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.0022998546666666664
+    },
+    {
+      "lambda": 0.1,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.12444444444444444,
+      "mean_utility_regret": 0.234194272024889,
+      "success_rate": 0.48,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.0021970546666666667
+    },
+    {
+      "lambda": 0.5,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.27111111111111114,
+      "mean_utility_regret": 0.34880088253118136,
+      "success_rate": 0.3333333333333333,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 0.000665544
+    },
+    {
+      "lambda": 1.0,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.31555555555555553,
+      "mean_utility_regret": 0.1329652806568622,
+      "success_rate": 0.28888888888888886,
+      "abstention_rate": 0.0,
+      "mean_oracle_cost_usd": 7.985266666666666e-05
+    }
+  ],
+  "val_daar_decomposed": {
+    "lambda": 0.0,
+    "abstention_mode": "p_solv",
+    "n": 225,
+    "mean_agent_regret": 0.08888888888888889,
+    "mean_utility_regret": 0.08888888888888889,
+    "success_rate": 0.5155555555555555,
+    "abstention_rate": 0.0,
+    "mean_oracle_cost_usd": 0.0023320993333333334
+  },
+  "val_baseline": {
+    "baseline": "hgbm_cvec5_emb_soft_kl",
+    "n": 225,
+    "mean_agent_regret": 0.022222222222222223,
+    "mean_utility_regret": 0.022222222222222223,
+    "success_rate": 0.5822222222222222,
+    "abstention_rate": 0.0,
+    "mean_oracle_cost_usd": 0.0013365393333333332
+  },
+  "predictions": {
+    "val": "/Users/poorna/Desktop/research_work/datasets/daar/routing/daar_decomposed_val_predictions.parquet"
+  },
+  "gate1a": {
+    "manifest": "/Users/poorna/Desktop/research_work/models/daar/solvability_gate1a_manifest.json",
+    "theta_s_val_tuned": 0.4,
+    "n_train_queries": 1050
+  },
+  "gate1b": {
+    "manifest": "/Users/poorna/Desktop/research_work/models/daar/solvability_gate1b_manifest.json",
+    "gate1_supervision": "success_only_soft_kl",
+    "n_train_solvable": 736
+  },
+  "factorization": "P(route,a|q) \u2248 P(solvable|q) \u00d7 P(a|solvable,q); \u03bb only in Gate 3"
+}

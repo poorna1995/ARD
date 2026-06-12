@@ -1,0 +1,50 @@
+# input/datasets.yaml
+# ─────────────────────────────────────────────────────────────────────
+# Master config for all benchmark datasets.
+# Keys are the dataset names used in the CLI (--dataset math).
+# ─────────────────────────────────────────────────────────────────────
+
+# ── 1. Hendrycks MATH ────────────────────────────────────────────────
+math:
+  display_name: "Hendrycks MATH"
+  hf_repo: "EleutherAI/hendrycks_math"
+  max_samples: null # null = load all (~12.5 k combined)
+  exclude_figures: true # drop problems with [asy] Asymptote blocks
+  levels: null # e.g. ["Level 5"] for hardest only
+  subjects: null # e.g. ["Algebra", "Number Theory"]
+  normalize_answers: true # MATH strip_string on \\boxed{} answers
+  # splits downloaded automatically: train + test
+
+# ── 2. MuSiQue (multi-hop QA) ────────────────────────────────────────
+musique:
+  display_name: "MuSiQue"
+  hf_repo: "dgslibisey/MuSiQue"
+  max_samples: null
+  keep_unanswerable: false # drop questions without a gold answer
+  # splits downloaded automatically: train + validation
+
+# ── 3. GAIA ──────────────────────────────────────────────────────────
+# NOTE: requires HuggingFace login.
+#   Run:  huggingface-cli login
+#   Or:   export HF_TOKEN=hf_your_token_here
+gaia:
+  display_name: "GAIA"
+  hf_repo: "gaia-benchmark/GAIA"
+  hf_config: "2023_all"
+  split: "validation" # only validation has gold answers
+  max_samples: null # ~450 rows total
+
+# ── 4. MMLU-Pro ──────────────────────────────────────────────────────
+mmlu:
+  display_name: "MMLU-Pro"
+  hf_repo: "TIGER-Lab/MMLU-Pro"
+  max_samples: null # ~12k test + ~70 val; set int to cap per-category
+  # splits downloaded automatically: validation + test
+
+# ── 5. HotpotQA ──────────────────────────────────────────────────────
+hotpot:
+  display_name: "HotpotQA"
+  hf_repo: "hotpot_qa"
+  hf_config: "distractor" # or "fullwiki"
+  max_samples: null # train ~90k; set e.g. 10000 to cap
+  # splits downloaded automatically: train + validation

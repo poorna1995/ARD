@@ -1,0 +1,125 @@
+% Section 2: Problem Formulation (features in Sec. 3; evaluation in Sec. 4)
+\section{Problem Formulation}
+\label{sec:problem}
+
+We study \textbf{pre-inference agent-strategy routing} for \textbf{Adaptive Agent Routing
+(AAR)}: given a query, select one \textbf{agent strategy} to execute before any strategy runs,
+using only pre-execution features.
+
+\subsection{Pre-Inference Agent-Strategy Routing}
+\label{sec:goal}
+
+Given a query $q$, the objective is to select an agent strategy from a fixed pool
+\begin{equation}
+  \mathcal{A}=\{a_1,\ldots,a_4\}=\{\texttt{raw},\texttt{cot},\texttt{react},\texttt{multiagent}\},
+  \label{eq:strategy-set}
+\end{equation}
+before any agent strategy is executed.
+Each member of $\mathcal{A}$ is a full execution policy---direct prompting (\texttt{raw}),
+chain-of-thought (\texttt{cot}), ReAct-style tool use (\texttt{react}), or multi-agent
+coordination (\texttt{multiagent})---not merely a reasoning style.
+
+For each query $q$ and strategy $a\in\mathcal{A}$, executing $a$ produces an answer
+$\hat{y}_a(q)$, an exact-match outcome $r_a(q)\in\{0,1\}$, and an execution cost
+$c_a(q)\ge 0$.
+Outcome $r_a(q)=1$ indicates exact-match success with a valid answer; $r_a(q)=0$ otherwise.
+A \textbf{routing policy} selects $\hat{a}(q)\in\mathcal{A}$ using only information available
+prior to execution, and the system returns
+\begin{equation}
+  \hat{y}(q)=\hat{y}_{\hat{a}(q)}(q).
+  \label{eq:output}
+\end{equation}
+At deployment, exactly one agent strategy is selected and executed; unlike ensemble or fusion
+approaches, no multiple strategies run on the same query.
+
+Each agent strategy induces a different accuracy--cost trade-off on the same query.
+The routing objective is to select $\hat{a}(q)$ using only a pre-execution feature vector
+$\phi(q)$ so that the chosen strategy is as close as possible to the utility-optimal strategy in
+$\mathcal{A}$.
+Empirical motivation for query-dependent routing appears in \S\ref{sec:intro}
+(Figure~\ref{fig:fixed-strategy-em}).
+
+\subsection{Utility, Oracle, and Regret}
+\label{sec:formal-reduction}
+
+\paragraph{Utility and oracle.}
+With utility weight $\lambda>0$,
+\begin{align}
+  U_a(q) &= r_a(q)-\lambda\,c_a(q),
+  \label{eq:utility} \\
+  a^\star(q) &\in \arg\max_{a\in\mathcal{A}} U_a(q).
+  \label{eq:hard-oracle}
+\end{align}
+The \emph{utility oracle} $a^\star(q)$ is the agent strategy that maximizes cost-penalized exact
+match when all outcomes $(r_a(q),c_a(q))_{a\in\mathcal{A}}$ are known offline; it is not available
+at deployment.
+Hard supervision assigns the single label $y(q)=a^\star(q)$.
+This collapses multiple successful but cost-different strategies into a single winner whenever
+$|\mathcal{C}(q)|\ge 2$.
+Utility defines the evaluation objective and oracle assignments, whereas cost-soft targets
+define the training supervision (Eq.~\ref{eq:cost-soft}).
+
+\paragraph{Successful strategy set.}
+Let
+\begin{equation}
+  \mathcal{C}(q)=\{a\in\mathcal{A}: r_a(q)=1\}
+  \label{eq:correct-set}
+\end{equation}
+denote the set of \textbf{successful strategies} for query~$q$.
+
+\paragraph{Regret.}
+Define $U^\star(q)=\max_{a\in\mathcal{A}} U_a(q)$ and utility regret
+\begin{equation}
+  \mathrm{Regret}(q)=U^\star(q)-U_{\hat{a}(q)}(q).
+  \label{eq:regret}
+\end{equation}
+Lower regret indicates closer alignment with the utility oracle.
+Oracle outcomes are recorded offline on the routing benchmark for training and evaluation; at
+deployment the router selects $\hat{a}(q)$ without per-query access to $(r_a,c_a)$.
+
+\subsection{Cost-Soft Supervision and Routing Policy}
+\label{sec:routing-policy}
+
+\paragraph{Why hard labels are insufficient.}
+Agent-strategy routing differs from standard classification because $\mathcal{C}(q)$ may contain
+more than one successful strategy.
+When several agent strategies succeed at different costs, hard labels retain only $a^\star(q)$
+and discard cheaper feasible alternatives in $\mathcal{C}(q)$.
+\textbf{Cost-soft supervision} addresses this by preserving probability mass over successful
+strategies rather than collapsing to a single hard winner.
+
+\paragraph{Cost-soft targets.}
+We assign targets $p^\star(a\mid q)$ as follows.
+If exactly one agent strategy succeeds ($|\mathcal{C}(q)|=1$), $p^\star(\cdot\mid q)$ is one-hot on
+$\mathcal{C}(q)$.
+If multiple strategies succeed ($|\mathcal{C}(q)|\ge 2$), probability mass is distributed over
+$\mathcal{C}(q)$ in proportion to lower execution cost:
+\begin{equation}
+  p^\star(a\mid q)=
+  \frac{\exp\bigl(-\tau\,c_a(q)\bigr)}
+  {\sum_{a'\in\mathcal{C}(q)} \exp\bigl(-\tau\,c_{a'}(q)\bigr)},
+  \quad a\in\mathcal{C}(q),
+  \label{eq:cost-soft}
+\end{equation}
+with $p^\star(a\mid q)=0$ for $a\notin\mathcal{C}(q)$ and label temperature $\tau>0$
+(distinct from utility weight $\lambda$ in Eq.~\ref{eq:utility}).
+If no strategy succeeds ($\mathcal{C}(q)=\emptyset$), the query is excluded from cost-soft
+training.
+
+\paragraph{Routing policy.}
+Given pre-execution features $\phi(q)$---a complexity--semantic vector combining procedural
+complexity with a semantic query embedding (\S\ref{sec:method-representation})---the router
+learns $p_\theta(a\mid\phi(q))$ over $a\in\mathcal{A}$ with $\sum_a p_\theta(a\mid\phi(q))=1$.
+The router is trained to match the cost-soft targets $p^\star(\cdot\mid q)$ using offline oracle
+outcomes on the routing benchmark (\S\ref{sec:method-train}).
+At deployment, the selected strategy is
+\begin{equation}
+  \hat{a}(q)=\arg\max_{a\in\mathcal{A}} p_\theta(a\mid\phi(q)).
+  \label{eq:argmax-route}
+\end{equation}
+
+\paragraph{Problem statement.}
+Pre-inference agent-strategy routing reduces to learning $p_\theta$ from $\phi(q)$, selecting
+$\hat{a}(q)$ before execution, and evaluating the resulting policy by utility regret against the
+oracle on the routing benchmark and by executed exact match and cost under benchmark transfer
+(\S\ref{sec:experiments}).

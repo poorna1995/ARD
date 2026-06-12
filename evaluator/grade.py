@@ -15,6 +15,8 @@ import unicodedata
 from collections import Counter
 from typing import Any
 
+from config.local.constants import DS
+
 # ── MATH benchmark string form (hendrycks/math; do not edit logic) ───────────
 
 
@@ -356,27 +358,17 @@ def grade_mmlu_nem(predicted: str, expected: str) -> bool:
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
-_DATASET_ALIASES: dict[str, str] = {
-    "math": "math",
-    "math_hard": "math",
-    "hotpot": "hotpot",
-    "musique": "musique",
-    "gaia": "gaia",
-    "mmlu_pro": "mmlu_pro",
-    "mmlu": "mmlu_pro",
-}
-
 
 def _resolve_dataset(dataset: str | None) -> str:
-    ds = (dataset or "").strip().lower()
-    return _DATASET_ALIASES.get(ds, ds or "hotpot")
+    ds = (dataset or "").strip().lower().replace("-", "_")
+    return DS.aliases.get(ds, ds or "hotpot")
 
 
 def normalize_for_dataset(text: str | None, dataset: str | None = None) -> str:
     key = _resolve_dataset(dataset)
     if key == "math":
         return normalize_math_answer(text)
-    if key == "mmlu_pro":
+    if key == "mmlu":
         return normalize_mmlu_answer(text)
     if key == "gaia":
         return normalize_gaia_string(text)
@@ -396,7 +388,7 @@ def grade(
 
     if key == "math":
         return grade_math(pred, gold)
-    if key == "mmlu_pro":
+    if key == "mmlu":
         return grade_mmlu_nem(pred, gold)
     if key == "gaia":
         return grade_gaia_nem(pred, gold)

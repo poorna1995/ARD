@@ -1,0 +1,14 @@
+{
+  "description": "Phase 0 golden baseline — regenerate with tests/golden/build_fixtures.py",
+  "primary_router": "models/router/graph_main/hgbm_cvec5_emb_soft_kl.joblib",
+  "universe_a": {
+    "split": "test",
+    "n_rows": 20,
+    "features_parquet": "tests/golden/inference_universe_a.parquet",
+    "expected_json": "tests/golden/expected_predictions_universe_a.json",
+    "atol": 1e-6
+  },
+  "checksums": {
+    "results/reports/live_eval/oracle_bounds_long.csv": "1d7880489b4271e46543c368219211a6e469a74854a0b32d376a05e283b6b0f9"
+  }
+}

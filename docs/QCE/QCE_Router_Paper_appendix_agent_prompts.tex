@@ -1,0 +1,15 @@
+% Appendix: agent execution prompts — verbatim from codebase
+\section{Agent Strategy Prompts}
+\label{app:agent-prompts}
+
+At inference the router selects one of four \emph{execution} strategies
+($\texttt{raw}$, $\texttt{cot}$, $\texttt{react}$, $\texttt{multiagent}$).
+Each strategy uses a dataset-conditioned system prompt from
+\texttt{input/prompts/prompts\_core.py}.
+Unlike the QCE \emph{procedure planner} (Appendix~\ref{app:decompose-prompts}), these prompts
+instruct the model to answer the question under a shared JSON contract
+(\texttt{answer}, \texttt{confidence}, \texttt{complexity}) for fair grading across strategies.
+Figure~\ref{fig:agent-prompt-suite} reproduces the HotpotQA templates verbatim.
+
+\input{figures/fig_agent_prompt_suite.tex}
+\clearpage

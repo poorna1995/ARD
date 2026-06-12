@@ -27,16 +27,19 @@
   "classifier": "hgbm",
   "feature_set": "cvec5_emb",
   "target": "soft_p",
+  "soft_target": "cost_soft",
+  "utility_lambda": 25.0,
+  "softmax_temperature": 0.05,
   "loss": "kl_soft_ce",
   "n_train_queries": 808,
   "n_train_expanded_rows": 3232,
-  "val_macro_f1_hard_label": 0.3859317093012745,
-  "val_accuracy_hard_label": 0.45,
+  "val_macro_f1_hard_label": 0.3062624093358726,
+  "val_accuracy_hard_label": 0.44,
   "hgbm_params": "default",
   "comparison": {
-    "soft_kl_test_regret": 0.191692,
+    "soft_kl_test_regret": 0.237255,
     "hard_hgbm_test_regret": 0.360571,
-    "delta_vs_hard_hgbm": -0.16887899999999997
+    "delta_vs_hard_hgbm": -0.12331599999999998
   },
   "four_way_test_regret": [
     {

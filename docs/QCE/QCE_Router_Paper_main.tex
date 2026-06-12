@@ -1,0 +1,77 @@
+% Full paper draft — compile from docs/: pdflatex QCE_Router_Paper_main.tex
+%
+% OVERLEAF (one .tex + bibliography):
+%   1. Upload this file (or your merged single .tex) AND QCE_Router_Paper.bib in the same folder.
+%   2. Menu -> Main document -> this file.
+%   3. Preamble MUST include: \usepackage[round,authoryear]{natbib}
+%   4. Before \end{document}, AFTER main text / BEFORE appendix, keep:
+%        \bibliographystyle{plainnat}
+%        \bibliography{QCE_Router_Paper}
+%   5. In body use \citep{key} or \citet{key} (keys must match QCE_Router_Paper.bib).
+%   6. Recompile; if cites show "?", click Recompile again (Overleaf runs BibTeX automatically).
+%
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage[round,authoryear]{natbib}  % load before hyperref
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[most]{tcolorbox}
+\usepackage{caption}
+\usepackage{ragged2e}
+% Helps two-column floats (prompt figure*, GAIA figure*) place correctly.
+\usepackage{dblfloatfix}
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+}
+\lstdefinestyle{promptsuite}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=2,
+  frame=none,
+  aboveskip=0pt,
+  belowskip=0pt,
+  inputencoding=utf8,
+  extendedchars=true,
+}
+
+% Figure search paths (compile from repo root or upload same tree on Overleaf).
+\graphicspath{{figures/}{results/reports/figures/}{results/reports/router/test/}{results/reports/router/val/}{results/reports/analysis/}}
+
+\title{Adaptive Agent Routing: Plan-Structure-Guided Cost-Soft Selection for LLM Agent Strategies}
+\author{Anonymous Authors}
+\date{}
+
+\begin{document}
+\maketitle
+
+\input{QCE_Router_Paper_abstract.tex}
+\input{QCE_Router_Paper_sec1.tex}
+\input{QCE_Router_Paper_sec2.tex}
+\input{QCE_Router_Paper_sec3.tex}
+\input{QCE_Router_Paper_sec4.tex}
+\input{QCE_Router_Paper_sec_related.tex}
+\input{QCE_Router_Paper_sec_conclusion.tex}
+\input{QCE_Router_Paper_sec_limitations.tex}
+
+% Upload at least one of: QCE_Router_Paper.bib or references.bib (same content).
+\bibliographystyle{plainnat}
+\bibliography{QCE_Router_Paper,references}
+
+\input{QCE_Router_Paper_appendix.tex}
+
+\end{document}

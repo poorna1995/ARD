@@ -1,0 +1,113 @@
+% Section 1: Introduction — Adaptive Agent Routing (AAR)
+\section{Introduction}
+\label{sec:intro}
+
+Large language models (LLMs) increasingly power agentic systems that perform multi-step
+reasoning, retrieval, tool use, and coordinated execution.
+As these agentic systems mature, they expose multiple \textbf{agent strategies}---raw direct
+prompting, chain-of-thought (CoT), ReAct-style tool use, and multi-agent coordination---each
+with distinct performance and inference costs for the same query.
+
+Despite this growing diversity, deployed agentic systems typically apply a \textbf{single fixed
+agent strategy} to every query.
+Query demands are not uniform: some instances are solvable with lightweight prompting, while
+others require multi-step reasoning, retrieval, or multi-agent orchestration.
+A static \textbf{routing policy} can therefore misalign execution cost with task requirements and
+weaken the \textbf{performance--cost trade-off} across heterogeneous workloads.
+On five executed benchmark workloads---GAIA~\citep{mialon2023gaia}, HotpotQA~\citep{yang2018hotpotqa},
+MuSiQue~\citep{trivedi2022musique}, MMLU-Pro~\citep{wang2024mmlupro}, and MATH~\citep{hendrycks2021math}
+($N{=}965$)---the best fixed strategy is not universal: ReAct~\citep{yao2023react} attains the
+highest exact match on four suites while chain-of-thought~\citep{wei2022cot} leads on MATH
+(Figure~\ref{fig:fixed-strategy-em}).
+
+\begin{figure}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{Exact match (\%) when each agent strategy is run in isolation ($n{=}965$ pooled).}
+  \label{fig:fixed-strategy-em}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Workload & raw & cot & react & multiagent & Best fixed \\
+    \midrule
+    GAIA & 4.2 & 6.1 & \textbf{26.1} & 13.3 & react \\
+    HotpotQA & 39.5 & 36.5 & \textbf{69.0} & 32.0 & react \\
+    MuSiQue & 2.5 & 2.5 & \textbf{36.5} & 25.5 & react \\
+    MMLU-Pro & 48.5 & 53.0 & \textbf{59.0} & 46.5 & react \\
+    MATH & 31.0 & \textbf{69.5} & 63.0 & 56.0 & cot \\
+    \bottomrule
+  \end{tabular}
+\end{figure}
+
+Prior routing methods demonstrate that adaptive selection can improve efficiency.
+However, much of this literature addresses \textbf{model routing}---selecting among strong and
+weak LLMs or API tiers~\citep{ong2025routellm,chen2024routerdc}---rather than routing among
+heterogeneous \textbf{agent strategies}.
+Routing signals in related work are often based on semantic query representations,
+query--candidate interaction graphs, or latent difficulty
+estimates~\citep{feng2025graphrouter,su2026daao}, and seldom encode the anticipated execution
+procedure that a query implies.
+
+This matters because semantically similar queries can require substantially different execution
+procedures due to differences in dependency structure, reasoning depth, external information
+requirements, or coordination demands.
+Consequently, effective routing requires signals that capture not only what a query is about,
+but also how it is likely to be solved.
+Agent strategies differ primarily in the kinds of procedures they execute; therefore routing
+decisions should depend not only on query content but also on anticipated procedural complexity.
+When supervised routing uses a single winning label, \textbf{hard supervision} also discards
+information when multiple agent strategies succeed at different costs.
+Unlike prior routers that rely primarily on flat query embeddings, we propose
+\textbf{Adaptive Agent Routing (AAR)}, which incorporates \textbf{query complexity}
+estimated from planner-derived procedural structures as an explicit signal for pre-inference
+strategy selection over
+$\mathcal{A}=\{\texttt{raw},\texttt{cot},\texttt{react},\texttt{multiagent}\}$.
+AAR further trains with \textbf{cost-soft supervision} that preserves information from multiple
+successful agent strategies rather than enforcing a single winner.
+\textbf{Procedural complexity} provides pre-execution information about anticipated reasoning,
+retrieval, tool use, and coordination demands that is unavailable from semantic representations
+alone.
+The routing objective is formalized in \S\ref{sec:problem}; the Query Complexity Estimator (QCE)
+and routing policy are described in \S\ref{sec:method}.
+
+\paragraph{Research question.}
+\textbf{RQ1:} Can planner-derived estimates of query complexity improve pre-inference
+agent-strategy routing under a performance--cost objective?
+
+\paragraph{Our solution.}
+To answer RQ1, we propose \textbf{Adaptive Agent Routing (AAR)}, a pre-inference
+agent-strategy routing framework built on three steps:
+\textbf{(i)}~the \textbf{Query Complexity Estimator (QCE)} estimates query complexity from
+planner-derived procedural structures;
+\textbf{(ii)}~query complexity is \textbf{fused} with a semantic query embedding to form the
+complexity--semantic routing representation fed to the router;
+\textbf{(iii)}~a \textbf{routing policy} is learned from \textbf{cost-soft supervision} over
+empirical agent outcomes, retaining mass on cheaper successful strategies instead of collapsing
+to one hard label.
+At deployment, only the selected strategy in $\mathcal{A}$ executes, preserving the efficiency of
+single-strategy serving.
+
+\paragraph{Why it matters.}
+Query complexity provides information about anticipated execution requirements that is
+unavailable from semantic representations alone.
+Incorporating such signals into routing decisions enables strategy selection based on expected
+procedural demands rather than query content alone.
+Cost-soft supervision further aligns training with deployment utility when multiple agent
+strategies in $\mathcal{A}$ are correct at different costs.
+Deployed agentic systems can thereby improve the cost-aware trade-off under single-strategy
+execution without running all four agent strategies on every query.
+
+\paragraph{Contributions.}
+Our contributions are:
+\begin{enumerate}
+  \item We propose \textbf{cost-soft supervision}, which preserves signal from all strategies
+    that succeed at different cost points rather than enforcing a single hard winning label.
+  \item We introduce a \textbf{complexity--semantic routing representation} that fuses
+    planner-derived procedural complexity with semantic embeddings; ablations show that
+    complexity provides complementary routing information when combined with embeddings, not
+    when used in isolation.
+  \item We evaluate AAR on a stratified routing benchmark and on transfer workloads---including
+    representation and supervision ablations---showing that cost-soft supervision contributes
+    the largest regret reduction and that the best configuration combines cost-soft training
+    with complexity--semantic features (\S\ref{sec:experiments}).
+\end{enumerate}

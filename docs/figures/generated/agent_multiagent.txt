@@ -1,0 +1,15 @@
+Multi-agent QA: Planner → Workers → Judge. Strict JSON at each stage.
+
+Task:
+Answer the multi-hop question.
+
+Representation rules:
+- use ONLY the provided Context paragraphs as evidence
+- copy the shortest supporting span from evidence
+- do not paraphrase or add words not in evidence
+- preserve punctuation, titles, and suffixes
+- when multiple candidates appear, pick the shortest span that answers the question
+- do not return intermediate hops when the question asks for the final entity
+
+
+Final answer type: short answer span: name, number, date, yes, or no.

@@ -18,12 +18,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from config.local.constants import DIMS, TRUST_COLS
 from qce.decompose import load_plans_jsonl
 from qce.graph import (
-    C_VECTOR_VER_V2,
-    DIM5_LEGACY_COLS,
-    DIM7_COLS,
-    DIM_COLS,
     GraphBuildResult,
     TrainNorm,
     build_graphs_from_plans,
@@ -33,31 +30,22 @@ from qce.graph import (
     rescore_dataframe,
 )
 
-C_VECTOR_VER = "c-vector-v3.0-main"
-C_VECTOR_COLS: tuple[str, ...] = DIM_COLS
+C_VECTOR_VER = DIMS.ver_main
+C_VECTOR_COLS: tuple[str, ...] = DIMS.main
 SCALAR_COL = "complexity_graph"
 ROUTER_MAIN_FEATURE_SET = "cvec"
-
-# Plan-reliability scalars (exported in complexity parquet; optional router add-on).
-TRUST_SCALAR_COLS: tuple[str, ...] = (
-    "plan_trust",
-    "verify_fraction",
-    "terminal_sink_ok",
-    "sink_intermediate_risk",
-)
+TRUST_SCALAR_COLS = TRUST_COLS
 
 _OUTPUT_COLS = (
     "training_id",
     "dataset",
     "c_vector_ver",
-    "c_vector_ver_v2",
     "final_constraint",
     "graph_status",
     "terminal_sink_ok",
     "sink_intermediate_risk",
     *C_VECTOR_COLS,
-    *DIM5_LEGACY_COLS,
-    *DIM7_COLS,
+    *DIMS.legacy,
     SCALAR_COL,
     "plan_trust",
     "verify_fraction",
@@ -145,15 +133,7 @@ def complexity_dataframe(
     full = rescore_dataframe(features_dataframe(build_graphs_from_plans(plans)), norm)
     out = full[[c for c in _OUTPUT_COLS if c in full.columns]].copy()
     out["c_vector_ver"] = C_VECTOR_VER
-    out["c_vector_ver_v2"] = C_VECTOR_VER_V2
     return out
-
-
-def c_vector_v7(features: dict[str, Any]) -> np.ndarray:
-    missing = [c for c in DIM7_COLS if c not in features]
-    if missing:
-        raise KeyError(f"C(Q) v2 missing keys {missing}")
-    return np.asarray([float(features[c]) for c in DIM7_COLS], dtype=np.float64)
 
 
 def complexity_splits(
@@ -189,10 +169,6 @@ def router_scalar_vector(df: pd.DataFrame) -> np.ndarray:
     if SCALAR_COL not in df.columns:
         raise KeyError(f"dataframe missing {SCALAR_COL!r}")
     return df[[SCALAR_COL]].to_numpy(dtype=np.float64)
-
-
-def router_feature_cols_v7() -> tuple[str, ...]:
-    return DIM7_COLS
 
 
 def router_feature_cols() -> tuple[str, ...]:
@@ -304,7 +280,3 @@ if __name__ == "__main__":
     v1 = [c for c in C_VECTOR_COLS if c in df.columns]
     if v1:
         print(df[v1].describe().round(3))
-    v2 = [c for c in DIM7_COLS if c in df.columns]
-    if v2:
-        print("dim7 (v2):")
-        print(df[v2].describe().round(3))

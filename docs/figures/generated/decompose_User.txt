@@ -1,0 +1,6 @@
+dataset=<hotpot|musique|math|mmlu|gaia>
+topology_hint=<bridge|comparison>   # HotpotQA only
+dataset=...
+metadata: ...
+question:
+<normalized query text>

@@ -11,7 +11,7 @@ from typing import Any
 from agent.base import BaseAgent, AgentResponse
 from evaluator import canonicalise_answer, parse_llm_output
 from evaluator.parse import extract_reasoning_steps
-from prompts.prompts import build_self_consistency_system, user_prompt
+from input.prompts.prompts import build_self_consistency_system, user_prompt
 
 # Logic / math symbols in the *question* → use literal vote keys (canonical strips `a`/`an`
 # as articles and nukes operators, collapsing different formulas to the same key).

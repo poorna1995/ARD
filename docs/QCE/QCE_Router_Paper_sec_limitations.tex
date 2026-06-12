@@ -1,0 +1,42 @@
+% Section: Limitations
+\section{Limitations}
+\label{sec:limitations}
+
+\paragraph{Evaluation scope.}
+Our strongest empirical gains appear on the routing benchmark, where all four strategies are
+executed offline per query and oracle correctness and cost labels are available for training
+and regret evaluation.
+Benchmark transfer is a secondary evaluation with mixed exact-match outcomes (e.g., pooled
+48.1\% vs.\ 50.3\% for a heuristic baseline); the proposed router does not uniformly lead on
+every executed family despite competitive performance.
+\textbf{Consequently}, routing-benchmark regret improvements should not be read as uniform
+accuracy gains on every public workload without per-family transfer validation.
+The framework is most reliable where training and evaluation share oracle multi-strategy
+supervision.
+
+\paragraph{Fixed strategy pool and shared backbone.}
+We route among four procedurally distinct strategies implemented on a shared model backbone.
+We do not study factorial combinations of backbones and agent designs, tool inventories, or
+prompt variants.
+Expanding $\mathcal{A}$ may change both the feature space and the supervision distribution
+required for cost-soft targets.
+
+\paragraph{Planner cost and quality.}
+Procedure-graph complexity depends on an LLM planner whose outputs can be noisy or miscalibrated
+for out-of-domain queries.
+When QCE runs at inference, total regret includes planner and feature-extraction cost;
+Selective QCE (Appendix~\ref{app:selective}) partially mitigates this overhead but is not the
+primary system reported in the main tables.
+
+\paragraph{Language and benchmark coverage.}
+Benchmark workloads are English-centric and drawn from reasoning, knowledge, and agentic QA
+settings.
+Generalization to multilingual inputs, long-context documents, or safety-critical domains is
+untested.
+
+\paragraph{Literature baselines.}
+RouteLLM, LLM-Blender, and GraphRouter inform our objective, supervision, and feature design but
+are not drop-in reimplemented in the four-strategy agent setting because of task mismatch
+(model-tier routing vs.\ tool-using agent pipelines).
+Direct head-to-head numbers against those systems remain an open comparison when unified
+benchmarks become available.

@@ -13,11 +13,11 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-_CONTEXT_DATASETS = frozenset({"hotpot", "musique"})
+from config.local.constants import DS
 
 
 def datasets_requiring_episode_context() -> frozenset[str]:
-    return _CONTEXT_DATASETS
+    return DS.wiki_qa
 
 
 def _coerce_raw(value: Any) -> Any:
@@ -186,7 +186,7 @@ def episode_context_from_row(
     Tries, in order: ``context``, ``episode_context``, ``paragraphs``, ``passages``.
     """
     ds = (dataset or str(row.get("dataset_source") or row.get("dataset") or "")).strip().lower()
-    if ds not in _CONTEXT_DATASETS:
+    if ds not in DS.wiki_qa:
         return None
 
     for key in ("context", "episode_context", "paragraphs", "passages"):

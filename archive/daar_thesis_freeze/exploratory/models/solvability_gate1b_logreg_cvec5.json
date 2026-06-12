@@ -1,0 +1,15 @@
+{
+  "experiment_id": "solvability_gate1b_logreg_cvec5",
+  "n_features": 5,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "feature_set": "cvec5",
+  "gate": "1b",
+  "classifier": "logreg",
+  "gate1_supervision": "success_only_soft_kl"
+}

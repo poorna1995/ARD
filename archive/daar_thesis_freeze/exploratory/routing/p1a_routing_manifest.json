@@ -1,0 +1,136 @@
+{
+  "gate": 3,
+  "variant": "p1a",
+  "gate1_supervision": "utility_softmax",
+  "rank_head": "p1",
+  "abstention_mode": "p_solv",
+  "theta_s": 0.4,
+  "route_cost_norms": {
+    "route_cost_hat_median_train": 351.66666666666663,
+    "route_cost_oracle_median_train": 254.5
+  },
+  "routing_score": "s_hat - lambda * route_cost_hat_norm",
+  "lambda_grid": [
+    0.0,
+    0.001,
+    0.005,
+    0.01,
+    0.05,
+    0.1,
+    0.5,
+    1.0
+  ],
+  "lambda_frozen": 0.001,
+  "lambda_selection": "min mean_agent_regret on val",
+  "primary_metric": "mean_agent_regret",
+  "val_lambda_sweep": [
+    {
+      "lambda": 0.0,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.14222222222222222,
+      "mean_utility_regret": 0.14222222222222222,
+      "success_rate": 0.4622222222222222,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 0.0013628753333333333
+    },
+    {
+      "lambda": 0.001,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.1288888888888889,
+      "mean_utility_regret": 0.14114209124645274,
+      "success_rate": 0.47555555555555556,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 0.0009787639999999998
+    },
+    {
+      "lambda": 0.005,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.22666666666666666,
+      "mean_utility_regret": 0.1954464963981663,
+      "success_rate": 0.37777777777777777,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 0.00018339866666666668
+    },
+    {
+      "lambda": 0.01,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.24444444444444444,
+      "mean_utility_regret": 0.17620973586553157,
+      "success_rate": 0.36,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 0.00010526599999999999
+    },
+    {
+      "lambda": 0.05,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.2577777777777778,
+      "mean_utility_regret": 0.1220091683038638,
+      "success_rate": 0.3466666666666667,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 0.00011675066666666665
+    },
+    {
+      "lambda": 0.1,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.28444444444444444,
+      "mean_utility_regret": 0.17882034490285964,
+      "success_rate": 0.32,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 0.00011561733333333332
+    },
+    {
+      "lambda": 0.5,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.3466666666666667,
+      "mean_utility_regret": 0.4375551189696573,
+      "success_rate": 0.2577777777777778,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 7.562733333333332e-05
+    },
+    {
+      "lambda": 1.0,
+      "abstention_mode": "p_solv",
+      "n": 225,
+      "mean_agent_regret": 0.3466666666666667,
+      "mean_utility_regret": 0.688443571272648,
+      "success_rate": 0.2577777777777778,
+      "abstention_rate": 0.16444444444444445,
+      "mean_oracle_cost_usd": 7.562733333333332e-05
+    }
+  ],
+  "val_daar_p1a": {
+    "lambda": 0.001,
+    "abstention_mode": "p_solv",
+    "n": 225,
+    "mean_agent_regret": 0.1288888888888889,
+    "mean_utility_regret": 0.14114209124645274,
+    "success_rate": 0.47555555555555556,
+    "abstention_rate": 0.16444444444444445,
+    "mean_oracle_cost_usd": 0.0009787639999999998
+  },
+  "val_baseline": {
+    "baseline": "hgbm_cvec5_emb_soft_kl",
+    "n": 225,
+    "mean_agent_regret": 0.022222222222222223,
+    "mean_utility_regret": 0.04332688932547479,
+    "success_rate": 0.5822222222222222,
+    "abstention_rate": 0.0,
+    "mean_oracle_cost_usd": 0.0013365393333333332
+  },
+  "predictions": {
+    "val": "/Users/poorna/Desktop/research_work/datasets/daar/routing/daar_p1a_val_predictions.parquet"
+  },
+  "abstain_head": {
+    "manifest": "/Users/poorna/Desktop/research_work/models/daar/solvability_abstain_manifest.json",
+    "theta_abstain_val_tuned": 0.4,
+    "n_train_queries": 1050
+  },
+  "p1_reference_frozen": "datasets/daar/routing/p1_frozen.json"
+}

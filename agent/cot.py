@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agent.base import BaseAgent, AgentResponse
 from evaluator.parse import extract_reasoning_steps, parse_llm_output
-from prompts.prompts import build_cot_system, user_prompt
+from input.prompts.prompts import build_cot_system, user_prompt
 
 
 class CotAgent(BaseAgent):

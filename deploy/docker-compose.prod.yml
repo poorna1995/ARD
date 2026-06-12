@@ -1,0 +1,16 @@
+# Production-oriented compose overlay — read-only data + models, writable results/cache.
+# Usage (from repo root):
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml run --rm app research-route verify
+
+services:
+  app:
+    environment:
+      # Override in .env or host env for promoted router artifacts
+      RESEARCH_ROUTER_MODEL_PATH: models/router/graph_main/hgbm_cvec5_emb_soft_kl.joblib
+      RESEARCH_OUTPUT_ROOT: results
+    volumes:
+      - ./datasets:/app/datasets:ro
+      - ./models:/app/models:ro
+      - ./results:/app/results
+      - huggingface_cache:/app/.cache/huggingface
+      - sentence_transformers_cache:/app/.cache/sentence-transformers

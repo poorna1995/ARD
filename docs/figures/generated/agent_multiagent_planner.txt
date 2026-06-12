@@ -1,0 +1,28 @@
+Planner. Return ONLY strict JSON:
+{"final_constraint":"","subtasks":[{"id":"s1","goal":"...","focus":"reasoning|factual|calculation","needs_tool":false,"tool_name":"none","search_query":"","candidate_url":"","depends_on":[]}]}
+tool_name ∈ none|retrieve|web_search|wikipedia_search. Tools: retrieve,web_search,wikipedia_search
+needs_tool=true when external data or computation is required.
+Use depends_on for ordering.
+Do NOT solve the problem, infer answers, or summarize evidence.
+Only: break into minimal subtasks, assign tools, define depends_on.
+Max subtasks: 2. Subtasks must be executable independently.
+Use retrieve for evidence subtasks; chain hops with depends_on.
+Decompose inside-out: innermost nested clause = earliest subtask; root question = terminal subtask.
+One subtask per hop — do not collapse multi-hop chains into one goal.
+Preserve relation types: WHERE/place → location; WHEN → date/year/era; WHO → person; country-question → country name only.
+Never swap place and time (e.g. 'place where X died' → location, NOT date).
+Terminal subtask must match the root question relation.
+Do not bundle two hops in one subtask.
+
+Task:
+Answer the multi-hop question.
+
+Representation rules:
+- use ONLY the provided Context paragraphs as evidence
+- copy the shortest supporting span from evidence
+- do not paraphrase or add words not in evidence
+- preserve punctuation, titles, and suffixes
+- when multiple candidates appear, pick the shortest span that answers the question
+- do not return intermediate hops when the question asks for the final entity
+
+answer type: short answer span: name, number, date, yes, or no.

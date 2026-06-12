@@ -1,0 +1,26 @@
+% QCE decomposition prompts — verbatim from input/prompts/qce_decompose.py (full-width figure*)
+\begin{figure*}[p]
+  \centering
+  \begin{tcolorbox}[
+    width=0.98\textwidth,
+    enhanced,
+    colback=white,
+    colframe=black!55,
+    arc=2pt,
+    boxrule=0.6pt,
+    title={\sffamily\bfseries QCE Procedure Planner Prompt Suite},
+    fonttitle=\small,
+    coltitle=white,
+    colbacktitle=brown!65!black,
+    attach boxed title to top left={yshift=-2mm},
+    boxed title style={arc=2pt},
+    left=3pt, right=3pt, top=4pt, bottom=3pt,
+  ]
+  \lstinputlisting[style=promptsuite]{figures/generated/decompose_prompt_suite.txt}
+  \end{tcolorbox}
+  \caption{QCE decomposition planner prompts reproduced verbatim from
+    \texttt{input/prompts/qce\_decompose.py} (system core, per-dataset strategy hints,
+    few-shot JSON examples, user template).
+    Response is parsed into subtasks, repaired into $G_q$, and passed to QCE feature extraction.}
+  \label{fig:decompose-prompt-suite}
+\end{figure*}

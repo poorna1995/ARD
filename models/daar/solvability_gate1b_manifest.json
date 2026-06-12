@@ -1,0 +1,35 @@
+{
+  "gate": "1b",
+  "variant": "gate1b",
+  "gate1_role": "per_agent_success_rank",
+  "gate1_supervision": "success_only_soft_kl",
+  "label_rule": "uniform p_a over {a : r_a=1}; zeros elsewhere; no cost",
+  "feature_set": "cvec5",
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "hgbm_params": null,
+  "model_stem": "solvability_gate1b_soft_kl",
+  "agents": [
+    "react",
+    "cot",
+    "raw",
+    "multiagent"
+  ],
+  "n_train_queries_total": 1050,
+  "n_train_solvable": 736,
+  "n_train_excluded_unsolvable": 314,
+  "n_train_expanded_rows": 2944,
+  "pairs_with": "gate1a P(solvable) at inference",
+  "models_dir": "/Users/poorna/Desktop/research_work/models/daar",
+  "model_path": "/Users/poorna/Desktop/research_work/models/daar/solvability_gate1b_soft_kl.joblib",
+  "n_val_solvable": 136,
+  "val_dominant_accuracy": 0.7352941176470589,
+  "val_mean_agent_regret": 0.14705882352941177,
+  "val_success_rate": 0.8529411764705882,
+  "val_frac_r_pred_eq_r_best": 0.8529411764705882
+}

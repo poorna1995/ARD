@@ -1,0 +1,34 @@
+{
+  "status": "frozen",
+  "variant": "p1",
+  "gate1_model": "models/daar/solvability_p1_soft_kl.joblib",
+  "gate1_supervision": "utility_softmax",
+  "utility_lambda": 25.0,
+  "softmax_temperature": 1.0,
+  "theta_s_frozen": 0.0,
+  "lambda_frozen": 0.001,
+  "ablation_theta_zero_val": {
+    "note": "Identical to theta_s=0.05 from training manifest; 0% abstention on val",
+    "mean_agent_regret": 0.09333333333333334,
+    "success_rate": 0.5111111111111111,
+    "abstention_rate": 0.0
+  },
+  "val": {
+    "daar_p1_regret": 0.09333333333333334,
+    "daar_p1_success": 0.5111111111111111,
+    "baseline_regret": 0.022222222222222223,
+    "baseline_success": 0.5822222222222222
+  },
+  "test_reported_once": {
+    "daar_p1_regret": 0.10666666666666667,
+    "daar_p1_success": 0.52,
+    "baseline_regret": 0.022222222222222223,
+    "baseline_success": 0.6044444444444445
+  },
+  "p0_test_reference": {
+    "daar_p0_regret": 0.15555555555555556,
+    "daar_p0_success": 0.4711111111111111
+  },
+  "outcome": "utility_supervision_improves_decomposition_still_trails_monolithic",
+  "gate3_pass": false
+}

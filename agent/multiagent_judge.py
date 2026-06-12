@@ -180,7 +180,7 @@ class JudgeMixin:
             from evaluator.grade import normalize_math_answer
 
             return normalize_math_answer(text)
-        if ds == "mmlu_pro":
+        if ds == "mmlu":
             from evaluator.grade import normalize_mmlu_answer
 
             return normalize_mmlu_answer(text)

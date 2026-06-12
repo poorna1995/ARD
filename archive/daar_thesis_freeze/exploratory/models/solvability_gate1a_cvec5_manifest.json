@@ -1,0 +1,48 @@
+{
+  "gate": "1a",
+  "variant": "gate1a",
+  "gate1_role": "query_solvability",
+  "target": "solvable",
+  "feature_set": "cvec5",
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "n_train_queries": 1050,
+  "n_train_solvable": 736,
+  "n_train_unsolvable": 314,
+  "n_val_queries": 225,
+  "n_val_solvable": 136,
+  "n_val_unsolvable": 89,
+  "theta_s": 0.3,
+  "theta_selection": "max_f1",
+  "max_false_abstention_solvable": null,
+  "val_accuracy": 0.6755555555555556,
+  "val_roc_auc": 0.6176470588235294,
+  "val_abstention": {
+    "theta_s": 0.3,
+    "abstention_rate": 0.1333333333333333,
+    "precision": 0.6615384615384615,
+    "recall": 0.9485294117647058,
+    "f1": 0.7794561933534743
+  },
+  "val_theta_row": {
+    "theta_s": 0.3,
+    "precision": 0.6615384615384615,
+    "recall": 0.9485294117647058,
+    "f1": 0.7794561933534743,
+    "abstention_rate": 0.13333333333333333,
+    "route_rate": 0.8666666666666667,
+    "false_abstention_rate_solvable": 0.051470588235294115,
+    "correct_abstention_rate_unsolvable": 0.25842696629213485,
+    "n_false_abstain_solvable": 7.0,
+    "n_correct_abstain_unsolvable": 23.0
+  },
+  "models_dir": "/Users/poorna/Desktop/research_work/models/daar",
+  "model_path": "archive/daar_thesis_freeze/exploratory/models/solvability_gate1a_cvec5.joblib",
+  "theta_s_joint_regret": 0.05,
+  "lambda_at_theta_joint": 0.0
+}

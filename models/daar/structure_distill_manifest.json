@@ -1,0 +1,24 @@
+{
+  "model": "structure_distill",
+  "teacher": "QCE cvec5 from daar frames",
+  "input": "emb_0..emb_15",
+  "output": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty"
+  ],
+  "val_mean_mae": 0.07355324024785183,
+  "val_per_dim_mae": {
+    "dim_structural": 0.06507652948164688,
+    "dim_reasoning": 0.05921439986866618,
+    "dim_evidence": 0.08967302128177267,
+    "dim_tool": 0.056574191974173904,
+    "dim_coordination_uncertainty": 0.09722805863299945
+  },
+  "mae_p90": 0.11727066919265722,
+  "confidence_formula": "conf = max(0, 1 - query_mae / mae_p90)",
+  "default_confidence_threshold": 0.35,
+  "model_path": "/Users/poorna/Desktop/research_work/models/daar/structure_distill.joblib"
+}

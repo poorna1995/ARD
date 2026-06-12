@@ -1,0 +1,22 @@
+{
+  "gate": "1b",
+  "variant": "gate1b_trace",
+  "daar_version": "2.0",
+  "feature_set": "cvec5_trace",
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty",
+    "trace_react_depth",
+    "trace_react_tool_loops",
+    "trace_react_planner_nodes",
+    "trace_react_planner_depth",
+    "trace_max_depth",
+    "trace_max_tool_loops"
+  ],
+  "model_path": "/Users/poorna/Desktop/research_work/models/daar/solvability_gate1b_trace_soft_kl.joblib",
+  "n_train_solvable": 736,
+  "val_dominant_accuracy_solvable": 0.7058823529411765
+}

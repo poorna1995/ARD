@@ -15,12 +15,14 @@ services:
     volumes:
       - ./datasets:/app/datasets
       - ./models:/app/models
-      - ./results_v2:/app/results_v2
+      - ./results:/app/results
       - huggingface_cache:/app/.cache/huggingface
       - sentence_transformers_cache:/app/.cache/sentence-transformers
     working_dir: /app
-    # Example: docker compose run --rm app uv run python -m orchestrator.pipeline --dataset hotpot --limit 1
-    command: ["uv", "run", "python", "-m", "orchestrator.pipeline", "--help"]
+    # Examples:
+    #   docker compose run --rm app research-route verify
+    #   docker compose run --rm app research-pipeline --dataset gaia --limit 1 --route-only
+    command: ["research-pipeline", "--help"]
 
 volumes:
   huggingface_cache:

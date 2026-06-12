@@ -1,0 +1,25 @@
+% Section: Conclusion
+\section{Conclusion}
+\label{sec:conclusion}
+
+Deployed agentic systems often apply a single fixed strategy to every query, even though
+different queries demand different reasoning procedures and incur different execution costs.
+We study \textbf{pre-inference agent-strategy routing} under a performance--cost objective:
+given a query, select one strategy from a fixed pool before any strategy runs.
+
+\textbf{Adaptive Agent Routing (AAR)} addresses this problem by combining planner-derived
+procedural complexity with semantic query embeddings and training a router with
+\textbf{cost-soft supervision} that preserves mass over cheaper correct strategies rather
+than collapsing to a single hard winner.
+
+On a held-out routing benchmark, \textbf{cost-soft supervision} contributes the largest
+reduction in utility regret (agent regret $0.361\to 0.192$).
+Planner-derived complexity further improves routing when \textbf{combined} with semantic
+features; complexity-only representations underperform embedding-only baselines, while the
+fused configuration attains the lowest total regret ($0.198$).
+Under executed benchmark transfer, results are competitive but mixed and do not uniformly
+outperform heuristic routing across families.
+
+Future work includes improving cross-workload transfer, distilling planner-derived complexity
+into cheaper features, expanding the strategy and backbone pools, and explicit
+characterization of the accuracy--cost Pareto frontier beyond scalar utility with fixed~$\lambda$.

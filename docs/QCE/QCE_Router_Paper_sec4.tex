@@ -1,0 +1,397 @@
+% Section: Experiments (claims + evidence; protocol in Appendix)
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Experimental Setup}
+\label{sec:experiments-setup}
+
+We evaluate AAR in two complementary settings.
+The \emph{routing benchmark} is the primary development testbed: every query has offline
+oracle outcomes for all four strategies, enabling regret-based comparison to the utility
+oracle and controlled ablations of features and supervision.
+\emph{Benchmark transfer} assesses whether a router trained on the routing benchmark deploys
+well on full public workloads where only pre-execution features are available at inference and
+strategies are executed live.
+\textbf{We next ask} three questions:
+(Q1)~Does cost-soft supervision reduce regret relative to hard labels?
+(Q2)~Does fusing planner-derived complexity with semantic embeddings improve routing
+beyond either signal alone (including a complexity-only ablation)?
+(Q3)~Do routing-benchmark gains transfer to executed workloads without oracle access?
+
+\paragraph{Benchmarks.}
+We use two evaluation settings.
+The \emph{routing benchmark} aggregates queries from multiple reasoning domains into
+train, validation, and test partitions (split sizes in Appendix~\ref{app:benchmark-construction}).
+For each training and evaluation query on this benchmark, all four strategies are executed
+once offline to obtain correctness and cost labels; the deployed router never accesses
+per-query oracle outcomes at inference.
+We then assess \emph{benchmark transfer} under executed inference on five public workloads:
+\textbf{GAIA}~\citep{mialon2023gaia}, \textbf{HotpotQA}~\citep{yang2018hotpotqa},
+\textbf{MuSiQue}~\citep{trivedi2022musique}, \textbf{MMLU-Pro}~\citep{wang2024mmlupro},
+and \textbf{MATH}~\citep{hendrycks2021math} (MMLU-Pro denoted MMLU in tables where space is limited).
+Dataset selection rationale and workload descriptions are in
+Appendix~\ref{app:benchmarks} (Tables~\ref{tab:deployment-sizes}--\ref{tab:pooled-utility});
+routing-benchmark construction is in Appendix~\ref{app:benchmark-construction}.
+
+\paragraph{Baselines and compared methods.}
+All policies route among four strategies
+(Eq.~\ref{eq:strategy-set}): direct prompting, chain-of-thought reasoning, ReAct-style tool
+use, and multi-agent coordination.
+\textbf{Fixed-strategy baselines} always execute one strategy and characterize non-adaptive
+deployment.
+\textbf{Learned routers} train tabular classifiers on $\phi(q)$ under hard labels,
+utility-softmax targets, or cost-soft targets $p^\star(\cdot\mid q)$.
+\textbf{Heuristic routers} replace planner-derived $\mathbf{z}(q)$ with hand-crafted lexical
+and query-level heuristic features (Appendix~\ref{app:features}).
+\textbf{Oracle references} include the utility-maximizing strategy $a^\star(q)$
+(Eq.~\ref{eq:hard-oracle}) and a per-query \emph{best-agent} policy (Appendix~\ref{app:benchmarks}).
+
+\paragraph{Metrics and training.}
+The router is trained by minimizing
+$\mathrm{KL}\!\bigl(p^\star(\cdot\mid q)\,\|\,p_\theta(\cdot\mid\phi(q))\bigr)$
+under cost-soft targets $p^\star$ (Eq.~\ref{eq:cost-soft}), with hard-label and utility-softmax
+alternatives in ablations.
+On the routing benchmark we report utility regret (Eq.~\ref{eq:regret}), agent and total regret,
+and executed exact match; on transfer workloads we report executed exact match and mean cost.
+Representation ablations compare embedding-only, heuristic, complexity-only ($\mathbf{z}$), and
+complexity--semantic ($\mathbf{z}+\psi$) configurations (Appendix~\ref{app:features}).
+Training details, hyperparameters, and bootstrap protocols are in
+Appendices~\ref{app:hyperparameters} and~\ref{app:additional-analyses}.
+Unless stated otherwise, routing-benchmark tables refer to the held-out test partition ($n{=}100$).
+
+\subsection{Summary of Findings}
+\label{sec:results-overview}
+
+We organize empirical claims into three layers.
+\textbf{Main result (routing benchmark).}
+On the held-out routing benchmark, \emph{cost-soft supervision} provides the largest reduction
+in utility regret (agent regret $0.361\to 0.192$; Table~\ref{tab:hard-vs-soft}).
+Planner-derived complexity further improves routing when \emph{combined} with semantic
+embeddings: the fused representation attains the lowest total regret ($0.198$), while
+complexity-only features underperform embedding-only baselines
+(Table~\ref{tab:feature-regret}).
+\textbf{Secondary result (benchmark transfer).}
+Routing-benchmark improvements do not fully translate into exact-match gains across all
+benchmark families (48.1\% pooled exact match vs.\ 50.3\% for a heuristic baseline;
+Table~\ref{tab:live-benchmark}).
+\textbf{Oracle reference (Best agent).}
+Rows labeled \textbf{Best agent} quantify headroom from per-query oracle selection, not a
+deployable policy.
+
+\subsection{Representation Analysis}
+\label{sec:representation-analysis}
+\label{sec:feature-ablation}
+\label{sec:main-results}
+
+\textbf{Research question.}
+Does planner-derived procedural complexity improve routing when fused with semantic
+embeddings, relative to either signal alone?
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{2pt}
+  \caption{Routing benchmark: representation comparison (held-out test, $n{=}100$).
+    All rows: HGBM trained with cost-soft $p^\star$.
+    Total regret includes QCE planner cost for complexity-only and complexity--semantic rows
+    (embedding-only and heuristic rows do not invoke the planner).}
+  \label{tab:feature-regret}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Representation & Total regret $\downarrow$ & Agent regret $\downarrow$ & EM $\uparrow$ \\
+    \midrule
+    Embedding-only ($\psi$) & 0.242 & 0.242 & 77\% \\
+    Heuristic baseline & 0.240 & 0.240 & 77\% \\
+    Complexity-only ($\mathbf{z}$) & 0.273 & 0.267 & 74\% \\
+    \textbf{Complexity--semantic ($\mathbf{z}+\psi$)} & \textbf{0.198} & \textbf{0.192} & \textbf{82\%} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \caption{Alignment with oracle routing assignments (macro-F1, diagnostic).}
+  \label{tab:feature-macro-f1}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    Representation & Macro-F1 $\uparrow$ \\
+    \midrule
+    Embedding-only ($\psi$) & 0.261 \\
+    Heuristic baseline & 0.255 \\
+    Complexity-only ($\mathbf{z}$) & 0.290 \\
+    \textbf{Complexity--semantic ($\mathbf{z}+\psi$, proposed)} & \textbf{0.323} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:feature-regret} reports regret and executed exact match under cost-soft
+supervision on the held-out routing benchmark; Table~\ref{tab:feature-macro-f1} reports
+macro-F1 as a diagnostic of alignment with hard oracle routing assignments $a^\star(q)$
+(not identical to utility regret under cost-soft routing).
+Complexity-only improves macro-F1 over embedding-only and heuristics ($0.290$ vs.\
+$0.261$/$0.255$) yet attains higher regret (Table~\ref{tab:feature-regret}); the proposed
+fusion remains best on both metrics ($0.323$ macro-F1).
+\textbf{These results suggest} that neither planner-derived complexity nor semantic embeddings
+alone suffice for routing: complexity-only ($\mathbf{z}$) attains higher total and agent regret
+than embedding-only (total $0.273$ vs.\ $0.242$; agent $0.267$ vs.\ $0.242$) and lower
+executed exact match (74\% vs.\ 77\%).
+Fusing $\mathbf{z}(q)$ with $\psi(q)$, however, yields the best configuration---total regret
+$0.198$, agent regret $0.192$, and 82\% executed exact match---improving over embedding-only
+by $0.044$ total / $0.050$ agent regret and over complexity-only by $0.075$ total /
+$0.075$ agent regret.
+\textbf{Takeaway.}
+Complexity-only representations underperform embedding-only features, indicating that procedural
+complexity is insufficient in isolation.
+Planner-derived complexity is nonetheless \emph{complementary}: the full
+$\phi(q)=[\mathbf{z}(q);\psi(q)]$ representation strictly outperforms either component alone
+under our benchmark.
+
+To examine which aspects of planner-derived complexity drive routing gains, we ablate the
+five QCE dimensions $z_1,\ldots,z_5$ (Table~\ref{tab:complexity-dims}) while holding the
+supervision protocol and semantic embedding $\psi(q)$ fixed.
+Each ablated model uses \emph{one} complexity coordinate plus $\psi(q)$; the full system uses
+all five coordinates with $\psi(q)$.
+Table~\ref{tab:qce-dim-ablation} summarizes held-out test regret for each configuration;
+Figure~\ref{fig:qce-dim-ablation} plots the single-dimension rows.
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \caption{QCE dimension ablation (held-out test, $n{=}100$).
+    HGBM with cost-soft $p^\star$; each row uses one complexity dimension plus $\psi(q)$.}
+  \label{tab:qce-dim-ablation}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Feature & Total regret $\downarrow$ & Agent regret $\downarrow$ \\
+    \midrule
+    \textbf{Full (five dims + $\psi$)} & \textbf{0.198} & \textbf{0.192} \\
+    Structural only ($z_1$) & 0.208 & 0.202 \\
+    Reasoning only ($z_2$) & 0.210 & 0.204 \\
+    Evidence only ($z_3$) & 0.228 & 0.222 \\
+    Tool only ($z_4$) & 0.247 & 0.241 \\
+    Coordination only ($z_5$) & 0.249 & 0.243 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \IfFileExists{results/reports/figures/fig6_qce_dimension_ablation.png}{%
+    \includegraphics[width=0.92\linewidth]{results/reports/figures/fig6_qce_dimension_ablation.png}%
+  }{%
+    \fbox{\parbox[c][1.0in][c]{0.9\linewidth}{\centering\small
+      Run \texttt{python -m research.figures} $\rightarrow$
+      \texttt{fig6\_qce\_dimension\_ablation.png}.}}%
+  }
+  \caption{Single-dimension QCE ablation: total utility regret when routing with one
+    complexity dimension plus semantic embeddings (dashed line: full five-dimensional
+    $\mathbf{z}(q)$ with $\psi$).}
+  \label{fig:qce-dim-ablation}
+\end{figure}
+
+Table~\ref{tab:qce-dim-ablation} and Figure~\ref{fig:qce-dim-ablation} show that no single
+dimension recovers the performance of the full vector: total regret rises from $0.198$ to at
+least $0.208$ when any one dimension is used alone.
+Structural ($z_1$) and reasoning ($z_2$) dimensions yield the lowest single-signal regret
+($0.208$ and $0.210$), consistent with routing dependence on anticipated plan depth and
+inference demand.
+Evidence ($z_3$) remains informative but weaker in isolation ($0.228$).
+Tool ($z_4$) and coordination ($z_5$) dimensions are the least sufficient on their own
+($0.247$ and $0.249$), suggesting that retrieval- and orchestration-related cues are most
+valuable when combined with other procedural signals rather than as standalone routers.
+
+Leave-one-out ablations in Appendix~\ref{app:qce-dim-loo} reinforce this picture: withholding
+reasoning produces nearly the same regret as the full model ($0.199$), whereas withholding
+structural or evidence coordinates increases regret more substantially ($0.228$ and $0.206$).
+Together, the single-dimension and leave-one-out results indicate that QCE captures
+\emph{complementary} facets of procedural structure; the five-dimensional design is justified
+even though no single facet alone matches full fusion.
+
+\subsection{Supervision Analysis}
+\label{sec:supervision-analysis}
+\label{sec:soft-target-ablation}
+\label{sec:routing-benchmark}
+
+\textbf{Research question.}
+Does cost-soft supervision improve routing relative to hard labels and utility-softmax
+targets?
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{Routing benchmark: hard vs.\ cost-soft supervision (held-out test).}
+  \label{tab:hard-vs-soft}
+  \begin{tabular}{@{}llrrr@{}}
+    \toprule
+    Policy target & Classifier & Total regret $\downarrow$ & Agent regret $\downarrow$ & EM $\uparrow$ \\
+    \midrule
+    Hard & HGBM & 0.366 & 0.361 & 63\% \\
+    Hard & Logistic & 0.251 & 0.245 & 76\% \\
+    Soft ($p^\star$) & Logistic & 0.205 & 0.199 & 81\% \\
+    \textbf{Soft ($p^\star$)} & \textbf{HGBM} & \textbf{0.198} & \textbf{0.192} & \textbf{82\%} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:hard-vs-soft} compares hard-label and cost-soft training on the held-out test
+split for the proposed representation.
+\textbf{These results suggest} that supervision design dominates classifier capacity under our
+setting: hard-label HGBM underperforms soft-label logistic regression, whereas cost-soft HGBM
+achieves the best overall configuration.
+Cost-soft supervision with gradient-boosted trees achieves the lowest regret, reducing agent
+regret from $0.361$ to $0.192$ and raising executed exact match from 63\% to 82\%.
+The supervision effect exceeds differences between classifiers under soft training,
+indicating that \emph{how} the router is supervised matters more than the choice of
+classifier alone.
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{Routing benchmark: supervision comparison (held-out test, $n{=}100$).
+    All rows: HGBM, complexity--semantic $\phi(q)$.}
+  \label{tab:soft-target}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Target & Total regret $\downarrow$ & Agent regret $\downarrow$ & EM $\uparrow$ \\
+    \midrule
+    Hard labels (HGBM) & 0.366 & 0.361 & 63\% \\
+    Utility-softmax & 0.243 & 0.237 & 77\% \\
+    \textbf{Cost-soft $p^\star$} & \textbf{0.198} & \textbf{0.192} & \textbf{82\%} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:soft-target} contrasts supervision targets under the same representation.
+Cost-soft $p^\star$ achieves the lowest regret ($0.198$ total, $0.192$ agent) and highest
+executed exact match ($82\%$), whereas utility-softmax yields $0.243$/$0.237$ and hard
+labels (HGBM) yield $0.366$/$0.361$.
+\textbf{Takeaway.}
+Restricting training mass to correct strategies and reweighting them by cost provides
+better supervision than hard argmax labels or utility-softmax over all strategies.
+
+\subsection{Benchmark Transfer Evaluation}
+\label{sec:benchmark-transfer}
+\label{sec:deployment-evaluation}
+
+\textbf{Research question.}
+Do routing policies learned on the routing benchmark transfer to executed workloads
+without per-query oracle access at inference?
+
+\begin{table*}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{1.05}
+  \caption{\textbf{Benchmark transfer evaluation.}
+    Execution exact match (EM, \%) and mean cost (mUSD/query) across five executed benchmark families.
+    Fixed-strategy baselines always execute one strategy.
+    \textbf{Average} is the unweighted mean across fixed strategies.
+    \textbf{Best agent} is an oracle reference that selects the lowest-cost correct strategy per query (or lowest-cost strategy if none is correct).
+    \textbf{Selective} applies QCE-based gating.
+    \textbf{Proposed}$^\dagger$ uses a complexity--semantic representation with cost-soft supervision;
+    \textbf{Heuristic baseline} uses heuristic routing features.
+    Costs include query-complexity estimation and strategy execution.}
+  \label{tab:live-benchmark}
+  \begin{tabular}{@{}l *{5}{cc}@{}}
+    \toprule
+    \multirow{2}{*}{Method} &
+      \multicolumn{2}{c}{GAIA} &
+      \multicolumn{2}{c}{MMLU} &
+      \multicolumn{2}{c}{HotpotQA} &
+      \multicolumn{2}{c}{MATH} &
+      \multicolumn{2}{c}{MuSiQue} \\
+    \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
+    & EM & mUSD & EM & mUSD & EM & mUSD & EM & mUSD & EM & mUSD \\
+    \midrule
+    Raw        &  4.2 & 0.044 & 48.5 & 0.057 & 39.5 & 0.041 & 31.0 & 0.049 &  2.5 & 0.042 \\
+    CoT        &  6.1 & 0.072 & 53.0 & 0.059 & 36.5 & 0.041 & 69.5 & 0.278 &  2.5 & 0.042 \\
+    ReAct      & 26.1 & 4.709 & 59.0 & 0.134 & 69.0 & 1.133 & 63.0 & 0.658 & 36.5 & 2.486 \\
+    Multiagent & 13.3 & 8.450 & 46.5 & 0.451 & 32.0 & 2.638 & 56.0 & 1.138 & 25.5 & 8.658 \\
+    \midrule
+    Average    & 12.4 & 3.319 & 51.8 & 0.175 & 44.2 & 0.963 & 54.9 & 0.531 & 16.8 & 2.807 \\
+    Best agent & 31.5 & 1.063 & 70.5 & 0.093 & 76.5 & 0.419 & 78.0 & 0.180 & 46.0 & 1.343 \\
+    Selective  & 18.8 & 3.241 & 54.5 & 0.278 & 61.5 & 1.019 & 67.5 & 0.548 & 36.0 & 3.279 \\
+    \midrule
+    Ours$^\dagger$ & 18.8 & 3.409 & 55.0 & 0.354 & 58.5 & 1.073 & 67.0 & 0.637 & 36.0 & 2.920 \\
+    Heuristic  & 24.9 & 4.426 & 56.0 & 0.118 & 64.0 & 1.120 & 67.0 & 0.444 & 35.0 & 3.322 \\
+    \bottomrule
+  \end{tabular}
+  \par\vspace{0.4ex}%
+  \begin{minipage}{\linewidth}
+    \centering\footnotesize
+    $^\dagger$Proposed complexity--semantic router.
+    Pooled EM: 48.1\%; pooled mean cost: 1.616\,mUSD/query ($N{=}965$).
+  \end{minipage}
+\end{table*}
+
+\begin{table}[t]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{2pt}
+  \caption{Benchmark transfer: exact match (\%) on executed workloads (summary).}
+  \label{tab:benchmark-transfer-em}
+  \label{tab:deployment-em}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Workload & Proposed & Heur.\ baseline & ReAct & CoT \\
+    \midrule
+    GAIA & 18.8 & 24.9 & \textbf{26.1} & 6.1 \\
+    HotpotQA & 58.5 & \textbf{64.0} & \textbf{69.0} & 36.5 \\
+    MuSiQue & 36.0 & 35.0 & \textbf{36.5} & 2.5 \\
+    MMLU & 55.0 & \textbf{56.0} & \textbf{59.0} & 53.0 \\
+    MATH & 67.0 & 67.0 & 63.0 & \textbf{69.5} \\
+    Pooled & 48.1 & \textbf{50.3} & {---} & {---} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:live-benchmark} reports exact match and mean cost across five benchmark
+families; Table~\ref{tab:benchmark-transfer-em} summarizes exact match for the proposed
+router, a heuristic baseline, and representative fixed strategies.
+We distinguish in-domain workloads used in routing-benchmark construction (HotpotQA,
+MuSiQue, MATH) from held-out families (GAIA, MMLU-Pro).
+The proposed router attains 48.1\% pooled exact match versus 50.3\% for the heuristic
+baseline; it does not uniformly outperform heuristic routing or the strongest fixed strategy
+per family (Table~\ref{tab:benchmark-transfer-em}).
+ReAct~\citep{yao2023react} remains the strongest fixed strategy on several workloads
+(e.g., 69.0\% on HotpotQA).
+\textbf{These results suggest} that routing-benchmark improvements do not fully translate into
+exact-match gains across all benchmark families.
+Distribution shift---especially on held-out GAIA and MMLU-Pro workloads not used in routing-benchmark
+construction---and the gap between regret (which penalizes cost) and raw exact match (which does
+not) both contribute to this pattern.
+ReAct remains a strong \emph{fixed} policy on retrieval-heavy workloads, indicating that routers
+must overcome both representation limits and supervision--metric mismatch to beat a competent
+static default.
+
+\subsection{Discussion}
+\label{sec:discussion}
+
+\paragraph{What works.}
+On the routing benchmark, cost-soft supervision yields the largest reduction in utility regret
+(agent regret $0.361\to 0.192$; executed exact match 63\%$\to$82\%; Table~\ref{tab:hard-vs-soft}).
+The best configuration combines cost-soft training with the complexity--semantic representation
+(total regret $0.198$; Tables~\ref{tab:hard-vs-soft} and~\ref{tab:feature-regret}).
+
+\paragraph{What partially works.}
+Planner-derived complexity provides complementary routing information when fused with semantic
+embeddings, but not in isolation: complexity-only features attain higher regret than
+embedding-only baselines ($0.273$ vs.\ $0.242$; Table~\ref{tab:feature-regret}).
+Supervision design contributes more to regret reduction than feature enrichment alone, though
+both are needed for the best observed configuration.
+
+\paragraph{What remains difficult.}
+Routing-benchmark improvements do not fully translate into exact-match gains across all
+benchmark families (48.1\% pooled exact match vs.\ 50.3\% for a heuristic baseline;
+Table~\ref{tab:benchmark-transfer-em}).
+Pooled utility is also slightly lower on transfer workloads ($0.440$ vs.\ $0.458$;
+Table~\ref{tab:pooled-utility} in Appendix~\ref{app:benchmarks}).
+The framework is most reliable where training and evaluation share oracle multi-strategy
+supervision; transfer to executed public workloads should be validated per target family.
+
+Routing policy analysis, calibration diagrams, cost--accuracy frontiers, and embedding-dimension
+sweeps appear in Appendix~\ref{app:additional-analyses}.
+Extended interpretation is in Appendix~\ref{app:discussion}.

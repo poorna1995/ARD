@@ -30,13 +30,10 @@ from typing import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
+from config.local.constants import ROUTER_AGENTS
+
 # Routing agents for this project (4 strategies).
-DEFAULT_AGENTS: tuple[str, ...] = (
-    "raw",
-    "cot",
-    "react",
-    "multiagent",
-)
+DEFAULT_AGENTS: tuple[str, ...] = ROUTER_AGENTS
 DEFAULT_UTILITY_TIEBREAK: tuple[str, ...] = DEFAULT_AGENTS
 
 ORACLE_AGENT_COL = "agent"
@@ -224,6 +221,144 @@ def _correct_oracle_rows(oracle: pd.DataFrame) -> pd.DataFrame:
     iff = pd.to_numeric(df["is_failed"], errors="coerce").fillna(0).astype(int)
     has_answer = df["predicted_answer"].fillna("").astype(str).str.strip().ne("")
     return df[(ic == 1) & (iff == 0) & has_answer]
+
+
+def _agent_perf_and_cost(
+    row: pd.Series,
+    *,
+    cost_col: str = "cost_usd",
+) -> tuple[float, float]:
+    """``(perf, cost)`` for one oracle row (matches utility-argmax labeling)."""
+    ok = float(pd.to_numeric(row.get("is_correct"), errors="coerce") or 0.0) > 0
+    failed = float(pd.to_numeric(row.get("is_failed"), errors="coerce") or 0.0) > 0
+    has_answer = str(row.get("predicted_answer", "") or "").strip() != ""
+    perf = float(ok and not failed and has_answer)
+    cost = float(pd.to_numeric(row.get(cost_col), errors="coerce") or 0.0)
+    return perf, cost
+
+
+def utility_softmax_distribution_for_question(
+    oracle_rows: pd.DataFrame,
+    *,
+    agents: tuple[str, ...] = DEFAULT_AGENTS,
+    utility_lambda: float = DEFAULT_UTILITY_LAMBDA,
+    softmax_temperature: float = 1.0,
+    cost_col: str = "cost_usd",
+    agent_col: str = ORACLE_AGENT_COL,
+    require_correct: bool = True,
+) -> dict[str, float]:
+    """
+    Softmax over **all** agents using utility targets:
+    ``U_a = perf_a - utility_lambda * cost_a``, then ``p_a ∝ exp(U_a / softmax_temperature)``.
+
+    Unlike :func:`soft_distribution_for_question`, incorrect agents receive mass.
+    When ``require_correct=True`` (default), returns all zeros if no agent is correct
+    (same training mask as cost-only soft labels).
+    """
+    probs = {a: 0.0 for a in agents}
+    if oracle_rows.empty:
+        return probs
+
+    utilities: list[float] = []
+    present: list[str] = []
+    perfs: list[float] = []
+    for agent in agents:
+        sub = oracle_rows[oracle_rows[agent_col] == agent]
+        if sub.empty:
+            continue
+        perf, cost = _agent_perf_and_cost(sub.iloc[0], cost_col=cost_col)
+        present.append(agent)
+        perfs.append(perf)
+        utilities.append(perf - float(utility_lambda) * cost)
+
+    if not present:
+        return probs
+    if require_correct and max(perfs) <= 0:
+        return probs
+
+    temp = max(float(softmax_temperature), 1e-9)
+    u = np.asarray(utilities, dtype=float)
+    u = u - u.max()
+    w = np.exp(u / temp)
+    w = w / w.sum()
+    for agent, mass in zip(present, w, strict=True):
+        probs[agent] = float(mass)
+    return probs
+
+
+def build_utility_softmax_label_frame(
+    labels: pd.DataFrame,
+    oracle: pd.DataFrame,
+    *,
+    agents: tuple[str, ...] = DEFAULT_AGENTS,
+    utility_lambda: float = DEFAULT_UTILITY_LAMBDA,
+    softmax_temperature: float = 1.0,
+    cost_col: str = "cost_usd",
+    id_col: str = "training_id",
+    agent_col: str = ORACLE_AGENT_COL,
+) -> pd.DataFrame:
+    """Per-question ``p_*`` from utility softmax over all oracle agents."""
+    if id_col not in labels.columns:
+        raise ValueError(f"labels missing {id_col!r}")
+
+    soft_cols = soft_probability_columns(agents)
+    rows: list[dict[str, float]] = []
+    for tid in labels[id_col]:
+        g = oracle[oracle[id_col] == tid]
+        dist = utility_softmax_distribution_for_question(
+            g,
+            agents=agents,
+            utility_lambda=utility_lambda,
+            softmax_temperature=softmax_temperature,
+            cost_col=cost_col,
+            agent_col=agent_col,
+        )
+        rows.append({f"{SOFT_COL_PREFIX}{a}": dist[a] for a in agents})
+
+    soft = pd.DataFrame(rows, columns=soft_cols)
+    soft[SOFT_SUM_COL] = soft[soft_cols].sum(axis=1)
+    dominant = pd.Series(pd.NA, index=soft.index, dtype="object")
+    has_mass = soft[SOFT_SUM_COL] > 0
+    if has_mass.any():
+        dominant.loc[has_mass] = (
+            soft.loc[has_mass, soft_cols]
+            .idxmax(axis=1)
+            .str.removeprefix(SOFT_COL_PREFIX)
+        )
+    soft[SOFT_DOMINANT_COL] = dominant
+    return soft
+
+
+def attach_utility_softmax_labels(
+    labels: pd.DataFrame,
+    oracle: pd.DataFrame,
+    *,
+    agents: tuple[str, ...] = DEFAULT_AGENTS,
+    utility_lambda: float = DEFAULT_UTILITY_LAMBDA,
+    softmax_temperature: float = 1.0,
+    cost_col: str = "cost_usd",
+    target_col: str = TARGET_COL,
+) -> pd.DataFrame:
+    """Replace ``p_*`` with utility-softmax targets; keep ``oracle_agent`` / ``y`` unchanged."""
+    drop_cols = [
+        c
+        for c in labels.columns
+        if c.startswith(SOFT_COL_PREFIX)
+        or c in (SOFT_SUM_COL, SOFT_DOMINANT_COL, target_col)
+    ]
+    out = labels.drop(columns=drop_cols, errors="ignore")
+    soft = build_utility_softmax_label_frame(
+        out,
+        oracle,
+        agents=agents,
+        utility_lambda=utility_lambda,
+        softmax_temperature=softmax_temperature,
+        cost_col=cost_col,
+    )
+    out = pd.concat([out.reset_index(drop=True), soft], axis=1)
+    if "oracle_agent" in out.columns:
+        out[target_col] = out["oracle_agent"]
+    return out
 
 
 def soft_distribution_for_question(
@@ -866,7 +1001,7 @@ def build_qce_features_for_added_ids(
     """Decompose + append complexity / embedding parquet rows for newly added split ids."""
     from qce.complexity import complexity_dataframe, load_train_norm, write_complexity_parquet
     from qce.decompose import decompose_batch
-    from routing.router import plans_from_cache
+    from router.router import plans_from_cache
 
     root = v1_dir or default_v1_dir()
     repo = repo_root()

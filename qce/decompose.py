@@ -16,56 +16,26 @@ from openai import OpenAI
 from agent.base import COST_PER_1M
 from agent.dataset_profile import coerce_hop_name, coerce_positive_int, validate_planner_subtasks
 from evaluator.parse import extract_last_json_dict
-from prompts.qce_decompose import (
+from input.prompts.qce_decompose import (
     normalize_answer_granularity,
     normalize_final_constraint,
     normalize_relation_type,
     plan_msgs,
 )
-from qce.query_input import QueryIn, resolve_row
+from qce.io.query_input import QueryIn, resolve_row
 
 load_dotenv()
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DECOMPOSE_MODEL = "gpt-4o-mini"
-DEFAULT_CACHE_PATH = REPO_ROOT / "datasets/decomposer_cache/qce_train_plans.jsonl"
+from config.common import REPO_ROOT
+from config.global_config.paths import decomposer_cache_dir
+from config.global_config.runtime import retry_with_backoff
+from config.local.constants import DEFAULT_DECOMPOSE_MODEL, MAX_SEARCH_LEN, PLAN, PLAN_OK, PLAN_PARSE_FAIL, TOOLS
 
-PLAN_OK = "ok"
-PLAN_PARSE_FAIL = "parse_fail"
+DEFAULT_CACHE_PATH = decomposer_cache_dir() / "qce_train_plans.jsonl"
 
-_VALID_TOOLS = frozenset(
-    {
-        "none",
-        "web_search",
-        "wikipedia",
-        "math_tool",
-        "python_exec",
-        "read_file",
-        "arxiv_search",
-        "github_search",
-        "pdb_parse",
-        "retrieve_tool",
-    }
-)
-_TOOL_ALIASES = {
-    "math": "math_tool",
-    "wikipedia_search": "wikipedia",
-    "python": "python_exec",
-    "code": "python_exec",
-    "retrieve": "retrieve_tool",
-}
-_VALID_STEP_TYPES = frozenset({"retrieve", "reason", "compute", "verify", "select"})
-_SUBTASK_BANDS: dict[str, tuple[int, int]] = {
-    "hotpot": (2, 2),
-    "musique": (2, 5),
-    "math": (2, 4),
-    "mmlu_pro": (3, 3),
-    "gaia": (2, 4),
-}
 _ANSWER_IN_GOAL = re.compile(
     r"(?i)\b(the answer is|final answer|therefore the answer|answer:\s*\S)"
 )
-_MAX_SEARCH_LEN = 120
 
 _client: OpenAI | None = None
 
@@ -96,12 +66,12 @@ def _normalize_subtasks(raw: list[Any], *, max_n: int) -> list[dict[str, Any]]:
         seen.add(sid)
 
         raw_tool = str(item.get("tool", "none")).strip().lower() or "none"
-        tool = _TOOL_ALIASES.get(raw_tool, raw_tool)
-        if tool not in _VALID_TOOLS:
+        tool = TOOLS.aliases.get(raw_tool, raw_tool)
+        if tool not in TOOLS.plan:
             tool = "none"
 
         step_type = str(item.get("step_type", "reason")).strip().lower()
-        if step_type not in _VALID_STEP_TYPES:
+        if step_type not in PLAN.steps:
             step_type = "reason"
 
         needs_tool = bool(item.get("needs_tool", tool != "none"))
@@ -172,7 +142,7 @@ def _plan_warnings(
     metadata: dict[str, str | int | float],
 ) -> list[str]:
     warns: list[str] = []
-    lo, hi = _SUBTASK_BANDS.get(dataset, (1, 6))
+    lo, hi = PLAN.bands.get(dataset, (1, 6))
     n = len(subtasks)
     if n < lo or n > hi:
         warns.append(f"subtask_count:{n}_outside_{lo}_{hi}")
@@ -197,16 +167,16 @@ def _plan_warnings(
             sq = st["search_query"]
             if not sq:
                 warns.append(f"empty_search_query:{st['id']}")
-            elif len(sq) > _MAX_SEARCH_LEN:
-                st["search_query"] = sq[:_MAX_SEARCH_LEN]
+            elif len(sq) > MAX_SEARCH_LEN:
+                st["search_query"] = sq[:MAX_SEARCH_LEN]
                 warns.append(f"truncated_search_query:{st['id']}")
 
     if dataset == "gaia":
         attachment = str(metadata.get("file_name") or metadata.get("attachment") or "").strip()
         if attachment and subtasks and subtasks[0].get("tool") != "read_file":
             warns.append("gaia_file_not_first_step")
-    if dataset == "mmlu_pro" and any(st.get("needs_tool") for st in subtasks):
-        warns.append("mmlu_pro_unexpected_tool")
+    if dataset == "mmlu" and any(st.get("needs_tool") for st in subtasks):
+        warns.append("mmlu_unexpected_tool")
 
     return warns
 
@@ -234,19 +204,23 @@ def _llm_json(
     temperature: float,
     max_tokens: int,
 ) -> tuple[dict[str, Any], float, int, int, str]:
-    t0 = time.perf_counter()
-    resp = _openai().chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    latency = time.perf_counter() - t0
-    raw = resp.choices[0].message.content or ""
-    usage = resp.usage
-    pt = int(usage.prompt_tokens or 0)
-    ct = int(usage.completion_tokens or 0)
-    parsed = extract_last_json_dict(raw) or {}
+    def _call() -> tuple[Any, float, int, int, str]:
+        t0 = time.perf_counter()
+        resp = _openai().chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        latency = time.perf_counter() - t0
+        raw = resp.choices[0].message.content or ""
+        usage = resp.usage
+        pt = int(usage.prompt_tokens or 0)
+        ct = int(usage.completion_tokens or 0)
+        parsed = extract_last_json_dict(raw) or {}
+        return parsed, latency, pt, ct, raw
+
+    parsed, latency, pt, ct, raw = retry_with_backoff(_call, label="decompose")
     return parsed, latency, pt, ct, raw
 
 
@@ -282,7 +256,7 @@ def decompose_query(
             break
 
     status = PLAN_OK if parsed.get("subtasks") else PLAN_PARSE_FAIL
-    _, hi = _SUBTASK_BANDS.get(qin.dataset, (1, 6))
+    _, hi = PLAN.bands.get(qin.dataset, (1, 6))
     subtasks = _normalize_subtasks(parsed.get("subtasks") or [], max_n=hi)
     if subtasks:
         subtasks = _repair_deps(subtasks, dataset=qin.dataset, metadata=meta)
@@ -519,7 +493,7 @@ def recompute_plan_cache_costs(
 def _main() -> None:
     import argparse
 
-    from qce.corpus_io import load_corpus
+    from qce.io.corpus_io import load_corpus
 
     parser = argparse.ArgumentParser(description="QCE decomposition batch (cached JSONL)")
     parser.add_argument(

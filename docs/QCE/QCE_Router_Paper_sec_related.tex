@@ -1,0 +1,59 @@
+% Section 2: Related Work
+\section{Related Work}
+\label{sec:related-work}
+
+\paragraph{Cost-aware model routing.}
+\textsc{FrugalGPT}~\citep{chen2024frugalgpt} uses cascade-based selection among API models to reduce cost while preserving quality.
+\textsc{RouteLLM}~\citep{ong2025routellm} learns routers from human preference data for strong/weak model routing.
+\textsc{HybridLLM}~\citep{ding2024hybridllm}, \textsc{RouterDC}~\citep{chen2024routerdc}, and \textsc{LLMRank}~\citep{agrawal2025llmrank} pursue similar cost--quality objectives with classifier, contrastive, or ranking-based gating.
+Recent surveys and unified formulations further systematize routing and cascading trade-offs~\citep{moslem2026routing_survey,dekoninck2025cascade_routing}.
+These systems select among \emph{model variants} or API tiers; we instead route among
+heterogeneous \emph{agent strategies}---direct prompting, chain-of-thought, ReAct-style
+tool use, and multi-agent coordination---that differ in procedural structure as well as
+token cost.
+
+\paragraph{Query difficulty and workflow adaptation.}
+Difficulty-aware orchestration has moved from model selection toward workflow depth.
+\textsc{DAAO}~\citep{su2026daao} estimates query difficulty with a VAE and adapts multi-agent workflow depth and LLM assignment per query.
+\citet{tang2025task_complexity_mas} formalize when multi-agent systems help as task depth and width grow.
+\citet{zhu2025llm_already_knows} estimate LLM-perceived difficulty from hidden states without generating outputs.
+\textsc{STRIDE}~\citep{asthana2025stride} and \textsc{effGen}~\citep{srivastava2026effgen} provide complementary design-time modality selection and small-model agent frameworks.
+Our QCE representation targets the same pre-inference decision point but uses planner-derived procedure structure rather than latent difficulty scalars or hidden-state value functions alone.
+
+\paragraph{Multi-model fusion and ranking.}
+LLM-Blender~\citep{jiang2023llmblender} ranks and fuses candidate generations from multiple
+models, showing that the best pipeline often depends on the query and that multiple models
+can remain viable for the same input.
+Its design is largely \emph{post-hoc}: several models run (or their outputs are pooled),
+then a ranker or fuser selects or combines responses.
+We study \emph{pre-inference} routing that executes a single strategy per query while still
+preserving complementarity among correct strategies during training via cost-soft targets
+$p^\star$ (\S\ref{sec:method-supervision}).
+
+\paragraph{Agentic reasoning strategies.}
+Chain-of-thought prompting~\citep{wei2022cot}, ReAct~\citep{yao2023react}, and multi-agent frameworks such as AgentVerse~\citep{chen2024agentverse} define the strategy space we route over.
+Rather than proposing a new single strategy, we study how to choose among existing strategies before inference using query complexity signals.
+
+\paragraph{Graph-structured routers.}
+GraphRouter~\citep{feng2025graphrouter} constructs a query--model graph and applies graph
+neural message passing to predict which model to invoke.
+AgentRouter~\citep{zhang2025agentrouter} and related entity-centric graphs extend this idea to multi-agent assignment.
+Such methods encode \emph{affiliation} between queries and candidates but typically do not
+model anticipated \emph{solution procedure}---subtask depth, tool dependencies, or
+orchestration structure.
+AAR derives routing features from an LLM planner's procedure DAG and a compact
+complexity vector $\mathbf{z}(q)$ (\S\ref{sec:method-qce}--\ref{sec:method-representation}),
+complementing semantic embeddings rather than replacing execution with graph propagation at
+inference.
+
+\paragraph{Positioning.}
+RouteLLM, LLM-Blender, and GraphRouter are the closest published baselines for
+query-conditioned LLM orchestration and inform our experimental design
+(\S\ref{sec:experiments-setup}).
+RouteLLM motivates our utility-based regret metric; LLM-Blender motivates soft supervision
+over multiple successful candidates; GraphRouter motivates structured features beyond flat
+text embeddings.
+Our routing benchmark evaluates these ideas in a unified four-strategy setting with oracle
+supervision and executed benchmark transfer (Tables~\ref{tab:hard-vs-soft}--\ref{tab:benchmark-transfer-em}).
+Implementation notes and extended comparisons appear in
+Appendix~\ref{app:related-extended}.

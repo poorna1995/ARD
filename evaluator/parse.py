@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from config.local.constants import BAD_ANSWERS
+
 # Full-string markdown fence
 _FENCE_RE = re.compile(
     r"^```(?:json)?\s*\n?(.*?)\n?```\s*$",
@@ -22,25 +24,7 @@ _FENCE_RE = re.compile(
 )
 
 _DEFAULT_ANSWER_KEYS: tuple[str, ...] = ("answer",)
-_PLACEHOLDER_ANSWERS = frozenset(
-    {
-        "none",
-        "null",
-        "n/a",
-        "na",
-        "unknown",
-        "...",
-        "<value>",
-        "<short value>",
-        "<answer>",
-        "value",
-        "answer",
-        "your answer",
-        "your answer here",
-        "insert answer",
-        "tbd",
-    }
-)
+_PLACEHOLDER_ANSWERS = BAD_ANSWERS
 
 
 def optional_float(v: object) -> Optional[float]:

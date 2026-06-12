@@ -188,7 +188,7 @@ class PlannerMixin:
                         "depends_on": [],
                     }
                 ]
-            elif self.dataset == "mmlu_pro":
+            elif self.dataset == "mmlu":
                 normalized = [
                     {
                         "id": "s1",

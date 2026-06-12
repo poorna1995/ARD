@@ -1,0 +1,21 @@
+{
+  "experiment_id": "solvability_gate1b_trace_soft_kl",
+  "n_features": 11,
+  "feature_cols": [
+    "dim_structural",
+    "dim_reasoning",
+    "dim_evidence",
+    "dim_tool",
+    "dim_coordination_uncertainty",
+    "trace_react_depth",
+    "trace_react_tool_loops",
+    "trace_react_planner_nodes",
+    "trace_react_planner_depth",
+    "trace_max_depth",
+    "trace_max_tool_loops"
+  ],
+  "feature_set": "cvec5_trace",
+  "gate": "1b",
+  "gate1_supervision": "success_only_soft_kl",
+  "daar_version": "2.0"
+}
